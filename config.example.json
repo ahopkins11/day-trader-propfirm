@@ -1,0 +1,49 @@
+{
+  "_notes": "Copy to trader/config.json in your project. The account numbers are EXAMPLES for a Topstep 50K Combine: copy the real ones for your plan from your Topstep dashboard. Times are New York (ET).",
+
+  "strategy": "orb",
+  "strategy_params": {
+    "range_minutes": 15,
+    "direction": "long",
+    "stop": "mid",
+    "target_r": 1.0
+  },
+
+  "symbols": ["MES", "MNQ"],
+  "bar_minutes": 5,
+  "no_entries_before": "09:45",
+  "no_entries_after": "15:00",
+  "flat_by": "15:55",
+
+  "account": {
+    "firm": "Topstep",
+    "plan": "50K Trading Combine (EXAMPLE numbers: copy yours from the Topstep dashboard)",
+    "stage": "combine",
+    "starting_balance": 50000,
+    "max_loss_limit": 2000,
+    "trailing": "eod",
+    "trail_stops_at_start": true,
+    "daily_loss_limit": 1000,
+    "profit_target": 3000,
+    "max_contracts": 5,
+    "micros_per_contract": 10
+  },
+
+  "personal": {
+    "max_loss_per_trade_usd": 200,
+    "max_daily_loss_usd": 400,
+    "max_trades_per_day": 3,
+    "min_reward_risk": 1.0,
+    "buffer_usd": 100,
+    "max_contracts": 2
+  },
+
+  "fees_per_contract_round_trip": 0.0,
+
+  "news_blackout_minutes": 5,
+  "news_events": [
+    {"at": "2099-01-01 08:30", "label": "EXAMPLE: replace with real CPI / FOMC / jobs report times from an economic calendar"}
+  ],
+
+  "broker": "projectx"
+}
