@@ -11,7 +11,7 @@
       "description": "Claude skills for day trading futures on a prop firm account (Topstep): scanner, entry timer, exit planner, Time Machine, contract sizing, prop firm risk rules and a ProjectX order ticket. Strategy in strategies/orb.py.",
       "source": "./",
       "category": "productivity",
-      "homepage": "https://github.com/YOUR_GITHUB_USERNAME/day-trader-propfirm"
+      "homepage": "https://github.com/ahopkins11/day-trader-propfirm"
     }
   ]
 }

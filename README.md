@@ -44,14 +44,14 @@ after it closes:  prop-risk account trade --pnl ...    after the session:  prop-
 As a plugin in Claude Code:
 
 ```
-/plugin marketplace add YOUR_GITHUB_USERNAME/day-trader-propfirm
+/plugin marketplace add ahopkins11/day-trader-propfirm
 /plugin install day-trader-propfirm@day-trader-propfirm
 ```
 
 Or copy the folders (the skills need `propfirm/` and `strategies/` next to them):
 
 ```
-git clone https://github.com/YOUR_GITHUB_USERNAME/day-trader-propfirm.git
+git clone https://github.com/ahopkins11/day-trader-propfirm.git
 cp -r day-trader-propfirm/prop-* day-trader-propfirm/propfirm day-trader-propfirm/strategies ~/.claude/skills/
 ```
 
