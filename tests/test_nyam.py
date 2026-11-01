@@ -182,6 +182,29 @@ class KeepWatching(unittest.TestCase):
         self.assertEqual(r["levels"]["bias"], "long")          # Tue close 6020 > Mon midpoint 6000
 
 
+class BreakevenModes(unittest.TestCase):
+    def plan(self, **kw):
+        cfg, strat, p = setup(**kw)
+        return engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 9, 41), ES, cfg)["plan"]
+
+    def test_modes(self):
+        self.assertEqual((self.plan()["breakeven"], self.plan()["breakeven_close"]), (6025.0, False))
+        self.assertEqual(self.plan(breakeven_mode="1r")["breakeven"], 6026.0)          # 6020 + 6.00
+        c = self.plan(breakeven_mode="close")
+        self.assertEqual((c["breakeven"], c["breakeven_close"]), (6027.0, True))     # close above the FVG's top
+        self.assertIsNone(self.plan(breakeven_mode="second")["breakeven"])          # only one FVG ahead
+
+    def test_close_mode_needs_a_close(self):
+        plan = {"side": "long", "entry": 100.0, "stop": 98.0, "target": 106.0, "breakeven": 103.0,
+                "breakeven_close": True}
+        t = DT(2026, 10, 21, 10, 0)
+        bars = [{"t": t, "end": t + datetime.timedelta(minutes=5), "o": 100, "h": 103.5, "l": 99.5, "c": 101},
+                {"t": t + datetime.timedelta(minutes=5), "end": t + datetime.timedelta(minutes=10),
+                 "o": 101, "h": 101, "l": 99.75, "c": 100}]
+        w = engine.walk(plan, bars, DT(2026, 10, 21, 15, 55))
+        self.assertEqual(w["outcome"], "flat")       # a wick to 103.5 is not a close: the stop stayed at 98
+
+
 class Breakeven(unittest.TestCase):
     PLAN = {"side": "long", "entry": 100.0, "stop": 98.0, "target": 106.0, "breakeven": 103.0}
 

@@ -64,6 +64,10 @@ PARAMS = {
     "pd_timeframes": [15, 60],   # PD array = an FVG on these timeframes (minutes)
     "lookback_days": 3,          # how far back to look for PD arrays and 1H swings
     "breakeven": True,
+    "breakeven_mode": "touch",   # "touch": nearest 5m FVG ahead is touched
+                                 # "close": a candle CLOSES beyond that FVG
+                                 # "second": the SECOND 5m FVG ahead is touched
+                                 # "1r": price reaches 1R in profit
 }
 
 H = datetime.timedelta(hours=1)
@@ -329,20 +333,30 @@ def look_for_ifvg(j, sweep, name, f_htf, scan, m5, opp, dols, p, ctx, tick, long
             capped = p["max_target_r"] * abs(entry - stop)
             target = entry + capped if long_ else entry - capped
             tname = "%s (capped at %.1fR)" % (tname, p["max_target_r"])
-        be = None
-        if p.get("breakeven"):
+        be, be_close = None, False
+        mode = p.get("breakeven_mode") or "touch"
+        if mode not in ("touch", "close", "second", "1r"):
+            raise ValueError("breakeven_mode is touch, close, second or 1r")
+        if p.get("breakeven") and mode == "1r":
+            be = entry + abs(entry - stop) if long_ else entry - abs(entry - stop)
+        elif p.get("breakeven"):
             ahead = [g for g in opp if g["formed"] <= bk["t"]
                      and ((g["bottom"] > entry) if long_ else (g["top"] < entry))
                      and not any(((x["c"] > g["top"]) if long_ else (x["c"] < g["bottom"]))
                                  for x in m5 if g["formed"] <= x["t"] <= bk["t"])]
-            if ahead:
-                g = min(ahead, key=lambda g: g["bottom"]) if long_ else max(ahead, key=lambda g: g["top"])
-                be = g["bottom"] if long_ else g["top"]
-                if (be >= target) if long_ else (be <= target):
-                    be = None
+            ahead.sort(key=lambda g: g["bottom"] if long_ else -g["top"])     # nearest first
+            pick = 1 if mode == "second" else 0
+            if len(ahead) > pick:
+                g = ahead[pick]
+                if mode == "close":
+                    be, be_close = (g["top"] if long_ else g["bottom"]), True     # close beyond its far edge
+                else:
+                    be = g["bottom"] if long_ else g["top"]                       # touch its near edge
+        if be is not None and ((be >= target) if long_ else (be <= target)):
+            be = None
         bar = dict(bk, i=int((bk["t"] - ctx["open"]).total_seconds() // 300))
         return {"side": "long" if long_ else "short", "entry": entry, "stop": stop, "target": target,
-                "breakeven": be, "bar": bar,
+                "breakeven": be, "breakeven_close": be_close, "bar": bar,
                 "why": "%s swept into %dm FVG, 5m iFVG %.2f-%.2f, target %s" % (
                     name, f_htf["tf"], f["bottom"], f["top"], tname)}, ""
     return None, "%s swept at %s into a %dm FVG; no displacement iFVG yet%s" % (

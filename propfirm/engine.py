@@ -63,6 +63,7 @@ def finalize(sig, spec, cfg):
         "reward_usd_per_contract": round(contracts.dollars(wt, spec) - fees, 2),
         "reward_risk": round(wt / float(rt), 2) if rt else None,
         "breakeven": contracts.round_tick(be, spec) if be is not None else None,
+        "breakeven_close": bool(sig.get("breakeven_close")),
         "bar_start": b["t"].strftime("%Y-%m-%d %H:%M") if b else None,
         "bar_close": b["end"].strftime("%Y-%m-%d %H:%M") if b else None,
         "bar_index": b.get("i"),
@@ -130,6 +131,7 @@ def walk(plan, bars_after, flat_dt):
     risk = abs(plan["entry"] - plan["stop"])
     stop = plan["stop"]
     be = plan.get("breakeven")
+    on_close = plan.get("breakeven_close")
     moved = False
     last = None
     for b in bars_after:
@@ -142,8 +144,10 @@ def walk(plan, bars_after, flat_dt):
             return _out("breakeven" if moved else "stop", stop, end, plan, risk)
         if hit_tgt:
             return _out("target", plan["target"], end, plan, risk)
-        if be is not None and not moved and (b["h"] >= be if long_ else b["l"] <= be):
-            stop, moved = plan["entry"], True
+        if be is not None and not moved:
+            px_up, px_dn = (b["c"], b["c"]) if on_close else (b["h"], b["l"])
+            if px_up >= be if long_ else px_dn <= be:
+                stop, moved = plan["entry"], True
         last = b
     if last is None:
         return _out("flat", plan["entry"], None, plan, risk)
@@ -178,6 +182,7 @@ def simulate(plan, start_slot, end_slot, pools, sims=10000, seed=None):
     long_ = plan["side"] == "long"
     tgt, entry = plan["target"], plan["entry"]
     be = plan.get("breakeven")
+    on_close = plan.get("breakeven_close")
     risk = abs(entry - plan["stop"])
     slots = [s for s in range(start_slot, end_slot) if pools.get(s)]
     if not slots:
@@ -197,8 +202,11 @@ def simulate(plan, start_slot, end_slot, pools, sims=10000, seed=None):
             if (h >= tgt) if long_ else (l <= tgt):
                 done = "target"
                 break
-            if be is not None and not moved and ((h >= be) if long_ else (l <= be)):
-                stop, moved = entry, True
+            if be is not None and not moved:
+                c = price * rc
+                up, dn = (c, c) if on_close else (h, l)
+                if (up >= be) if long_ else (dn <= be):
+                    stop, moved = entry, True
             price = price * rc
         if done:
             counts[done] += 1
