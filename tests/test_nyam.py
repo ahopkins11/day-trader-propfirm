@@ -166,6 +166,16 @@ class KeepWatching(unittest.TestCase):
         self.assertEqual(r["status"], "triggered", r["reason"])
         self.assertEqual((r["plan"]["entry"], r["plan"]["stop"], r["plan"]["bar_close"][11:]), (6020.25, 6014.0, "09:45"))
 
+    def test_premarket_candle_closing_at_930_is_not_an_entry(self):
+        """The 9:25 candle closes at 9:30 but formed before the open: no entry on it."""
+        bars = week()
+        for b in bars:
+            if b["t"] == DT(2026, 10, 21, 9, 25):
+                b.update(o=6015.25, h=6020.25, l=6015.0, c=6020.0)
+        cfg, strat, p = setup()
+        r = engine.evaluate_day(strat, p, bars, DT(2026, 10, 21, 9, 31), ES, cfg)
+        self.assertNotEqual(r["status"], "triggered")
+
     def test_auto_bias_uses_the_midpoint(self):
         cfg, strat, p = setup()
         r = engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 8, 30), ES, cfg)

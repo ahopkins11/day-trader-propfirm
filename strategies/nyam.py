@@ -23,7 +23,10 @@
     previous NYAM    previous day 9:30-11:00 high / low
     Asia             8:00 PM-midnight high / low (the evening before)
     London           2:00-5:00 AM high / low
-    4H highs/lows    today's completed 4H candles (4H opens 6 PM, 10 PM, 2 AM, 6 AM, 10 AM, 2 PM)
+    4H highs/lows    today's completed 4H candles (4H opens 6 PM, 10 PM, 2 AM, 6 AM, 10 AM, 2 PM);
+                     as TARGETS also the 4H candles of the past lookback_days
+    prev NY lunch    yesterday 12:00-1:00 high / low       (targets only)
+    prev NY PM       yesterday 1:30-4:00 high / low        (targets only)
     1H swing         a 1H high (low) above (below) the 1H candles either side
     FVG              three candles where candle 3's low is above candle 1's high
                      (bullish) or candle 3's high is below candle 1's low (bearish)
@@ -211,6 +214,15 @@ def evaluate(bars, p, ctx):
         series = [c for c in resample(recent, tf) if c["end"] <= now]
         htf += [dict(f, tf=tf) for f in fvgs(series) if f["side"] == ("bull" if long_ else "bear")]
     hourly = [c for c in resample(recent, 60) if c["end"] <= now]
+    today_start = day_window(day)[0]
+    side_key, word = ("h", "high") if long_ else ("l", "low")
+    dols = dols + [("4H %s %s" % (word, c["t"].strftime("%m-%d %H:%M")), c[side_key], c["end"])
+                   for c in resample(recent, 240) if c["end"] <= now and c["t"] < today_start]
+    pday = prev_trading_day(day)
+    for label, a_, b_ in (("prev NY lunch", "12:00", "13:00"), ("prev NY PM", "13:30", "16:00")):
+        seg = between(all5, at(pday, a_), at(pday, b_))
+        if seg:
+            dols.append(("%s %s" % (label, word), hi(seg) if long_ else lo(seg), at(pday, b_)))
     dols = dols + [("1H swing %s" % (f.strftime("%m-%d %H:%M")), price, f)
                    for price, f in swings(hourly, "high" if long_ else "low")]
     m5 = [b for b in all5 if b["t"] >= at(day - datetime.timedelta(days=1), "18:00") and b["end"] <= now]
@@ -299,8 +311,8 @@ def look_for_ifvg(j, sweep, name, f_htf, scan, m5, opp, dols, p, ctx, tick, long
         if body <= 0 or body < p["displacement_x"] * avg:
             note = "; closed through without displacement at %s" % clock.hm(bk["t"])
             continue
-        if not ctx["can_enter"](bk):
-            note = "; displacement through it at %s, before the entry window" % clock.hm(bk["t"])
+        if not ctx["can_enter"](bk) or bk["t"] < at(bk["t"].date(), p["entry_from"]):
+            note = "; displacement through it at %s, outside the entry window" % clock.hm(bk["t"])
             continue
         entry = bk["c"]
         stop = ext - p["stop_buffer_ticks"] * tick if long_ else ext + p["stop_buffer_ticks"] * tick
