@@ -98,17 +98,21 @@ fvg() =>
 var array<float> zBot = array.new<float>()
 var array<float> zTop = array.new<float>()
 var array<int> zDir = array.new<int>()     // 1 bullish, -1 bearish
+var array<box> zBox = array.new<box>()     // its box on the chart (deleted when the FVG is inversed)
 
 addZone(bot, top, dir) =>
+    box bx = na
+    if showFvg
+        bx := box.new(bar_index, top, bar_index, bot, border_color = dir == 1 ? color.new(color.teal, 60) : color.new(color.maroon, 60), bgcolor = dir == 1 ? color.new(color.teal, 90) : color.new(color.maroon, 90))
     array.push(zBot, bot)
     array.push(zTop, top)
     array.push(zDir, dir)
+    array.push(zBox, bx)
     if array.size(zBot) > 40
         array.shift(zBot)
         array.shift(zTop)
         array.shift(zDir)
-    if showFvg
-        box.new(bar_index, top, bar_index + 30, bot, border_color = dir == 1 ? color.new(color.teal, 60) : color.new(color.maroon, 60), bgcolor = dir == 1 ? color.new(color.teal, 90) : color.new(color.maroon, 90))
+        box.delete(array.shift(zBox))
 
 if b15 == true
     addZone(b15bot, b15top, 1)
@@ -126,13 +130,16 @@ if array.size(zBot) > 0
         bot = array.get(zBot, i)
         top = array.get(zTop, i)
         dir = array.get(zDir, i)
-        broken = dir == 1 ? close < bot : close > top
+        broken = dir == 1 ? close < bot : close > top     // a close through the far side = inversed
         if broken
             array.remove(zBot, i)
             array.remove(zTop, i)
             array.remove(zDir, i)
-        else if dir == bias and low <= top and high >= bot
-            lastTouch := time
+            box.delete(array.remove(zBox, i))             // gone from the chart too
+        else
+            box.set_right(array.get(zBox, i), bar_index)  // still live: stretch it to the current candle
+            if dir == bias and low <= top and high >= bot
+                lastTouch := time
 pdTouched = time - lastTouch <= touchMin * 60000
 
 // ---------------------------------------------------------------- the sweep
