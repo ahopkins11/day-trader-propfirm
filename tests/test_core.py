@@ -177,7 +177,7 @@ class OrbKnownDay(unittest.TestCase):
         after = [b for b in data.session_bars(self.bars, datetime.date(2026, 10, 19), self.es)
                  if b["t"] >= DT(2026, 10, 19, 9, 55)]
         w = engine.walk(p, after, DT(2026, 10, 19, 15, 55))
-        self.assertEqual((w["outcome"], w["exit"], w["at"], w["r"]), ("target", 6019.5, "10:20", 1.0))
+        self.assertEqual((w["outcome"], w["exit"], w["at"], w["r"]), ("target", 6019.5, "10:25", 1.0))
 
     def test_entry_window_blocks_early_breakout(self):
         cfg = dict(self.cfg, no_entries_before="10:00")

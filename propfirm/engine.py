@@ -105,10 +105,10 @@ def walk(plan, bars_after, flat_dt):
             return _out("flat", b["o"], b["t"], plan, risk)
         hit_stop = b["l"] <= plan["stop"] if long_ else b["h"] >= plan["stop"]
         hit_tgt = b["h"] >= plan["target"] if long_ else b["l"] <= plan["target"]
-        if hit_stop:
-            return _out("stop", plan["stop"], b["t"], plan, risk)
+        if hit_stop:      # reported at the close of the candle that hit it
+            return _out("stop", plan["stop"], b.get("end", b["t"]), plan, risk)
         if hit_tgt:
-            return _out("target", plan["target"], b["t"], plan, risk)
+            return _out("target", plan["target"], b.get("end", b["t"]), plan, risk)
         last = b
     if last is None:
         return _out("flat", plan["entry"], None, plan, risk)
