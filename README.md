@@ -20,6 +20,14 @@ range midpoint, 1R target.
 - Swap in your own: copy `strategies/template.py`, write the rule, set
   `"strategy": "your_name"`. Full guide: [strategies/README.md](strategies/README.md).
 
+## Paper trading on TradingView
+
+Start here if you're practicing before a real Combine: copy
+`config.tradingview.example.json` to `trader/config.json`, add
+`tradingview/orb_indicator.pine` to a 5-minute MES1! or MNQ1! chart, and place
+the trades by hand in TradingView Paper Trading. Guide:
+[tradingview/README.md](tradingview/README.md).
+
 ## The skills
 
 | command | job | what it does |

@@ -1,0 +1,113 @@
+//@version=6
+// =============================================================================
+//  ORB (opening range breakout) - day-trader-propfirm
+//  The same rule as strategies/orb.py, drawn on a TradingView chart.
+//
+//  1. Opening range = high and low of the first N minutes from 9:30 ET.
+//  2. Long: first bar that CLOSES above the range high (short: below the low).
+//  3. Stop at the range midpoint ("mid") or the far side ("range").
+//  4. Target = Target R x risk. One signal per day. Flat by the flat time.
+//
+//  Use it on a 5-minute chart of MES1!, MNQ1!, ES1! or NQ1!.
+//  Alerts: Create Alert > Condition: this indicator > "Any alert() function call".
+//  Not financial advice. A signal is the rule firing, not a reason to trade.
+// =============================================================================
+indicator("ORB - day-trader-propfirm", overlay = true, max_labels_count = 500)
+
+rangeMin   = input.int(15, "Opening range (minutes)", minval = 5, step = 5)
+direction  = input.string("long", "Direction", options = ["long", "short", "both"])
+stopMode   = input.string("mid", "Stop", options = ["mid", "range"])
+targetR    = input.float(1.0, "Target (R)", minval = 0.25, step = 0.25)
+entryFrom  = input.int(945,  "No entries before (HHMM ET)")
+entryTo    = input.int(1500, "No entries after (HHMM ET)")
+flatAt     = input.int(1555, "Flat by (HHMM ET)")
+showRange  = input.bool(true, "Show the opening range")
+
+TZ = "America/New_York"
+OPEN_MIN = 9 * 60 + 30
+toMin(hhmm) => math.floor(hhmm / 100) * 60 + hhmm % 100
+
+barMin   = timeframe.in_seconds() / 60
+startMin = hour(time, TZ) * 60 + minute(time, TZ)     // this bar's start, ET
+endMin   = startMin + barMin                           // this bar's close, ET
+rangeEnd = OPEN_MIN + rangeMin
+
+// --- reset at the first regular-session bar of the day ----------------------
+newSession = startMin >= OPEN_MIN and startMin < 16 * 60 and (nz(startMin[1], 0) < OPEN_MIN or startMin[1] >= 16 * 60)
+
+var float orHi   = na
+var float orLo   = na
+var float entry  = na
+var float stop   = na
+var float target = na
+var int   side   = 0          // 1 long, -1 short, 0 none
+var bool  fired  = false
+var bool  active = false
+var int   entryBar = na
+
+if newSession
+    orHi   := na
+    orLo   := na
+    entry  := na
+    stop   := na
+    target := na
+    side   := 0
+    fired  := false
+    active := false
+    entryBar := na
+
+inRange   = startMin >= OPEN_MIN and startMin < rangeEnd
+rangeDone = startMin >= rangeEnd and startMin < 16 * 60 and not na(orHi)
+
+if inRange
+    orHi := na(orHi) ? high : math.max(orHi, high)
+    orLo := na(orLo) ? low  : math.min(orLo, low)
+
+// --- the entry rule ----------------------------------------------------------
+canEnter = endMin >= toMin(entryFrom) and endMin <= toMin(entryTo)
+
+if rangeDone and not fired and canEnter and barstate.isconfirmed
+    longOK  = direction != "short" and close > orHi
+    shortOK = direction != "long"  and close < orLo
+    if longOK or shortOK
+        side  := longOK ? 1 : -1
+        entry := close
+        mid    = (orHi + orLo) / 2
+        rawStop = stopMode == "mid" ? mid : (side == 1 ? orLo : orHi)
+        // the stop rounds away from the entry, like the Python tools
+        stop  := side == 1 ? math.floor(rawStop / syminfo.mintick) * syminfo.mintick : math.ceil(rawStop / syminfo.mintick) * syminfo.mintick
+        risk   = math.abs(entry - stop)
+        target := math.round_to_mintick(entry + side * targetR * risk)
+        fired  := true
+        active := true
+        entryBar := bar_index
+        ticks  = math.round(risk / syminfo.mintick)
+        usd    = risk * syminfo.pointvalue
+        txt = (side == 1 ? "LONG " : "SHORT ") + str.tostring(entry, format.mintick) + "\nstop " + str.tostring(stop, format.mintick) + "  target " + str.tostring(target, format.mintick) + "\n" + str.tostring(ticks) + " ticks = $" + str.tostring(usd, "#.##") + " per contract"
+        label.new(bar_index, side == 1 ? low : high, txt, style = side == 1 ? label.style_label_up : label.style_label_down, color = side == 1 ? color.new(color.green, 10) : color.new(color.red, 10), textcolor = color.white, size = size.small)
+        alert(syminfo.ticker + " ORB " + txt, alert.freq_once_per_bar_close)
+
+// --- after the entry: stop, target or the flat time ----------------------------
+if active and bar_index > entryBar
+    hitStop = side == 1 ? low <= stop : high >= stop
+    hitTgt  = side == 1 ? high >= target : low <= target
+    if hitStop
+        label.new(bar_index, stop, "STOP", style = label.style_xcross, color = color.red, textcolor = color.red, size = size.tiny)
+        active := false
+    else if hitTgt
+        label.new(bar_index, target, "TARGET", style = label.style_diamond, color = color.green, textcolor = color.green, size = size.tiny)
+        active := false
+    else if startMin >= toMin(flatAt)
+        label.new(bar_index, close, "FLAT", style = label.style_circle, color = color.gray, textcolor = color.gray, size = size.tiny)
+        alert(syminfo.ticker + " ORB: flat time, close the position", alert.freq_once_per_bar)
+        active := false
+
+// --- drawing -------------------------------------------------------------------
+inRth = startMin >= OPEN_MIN and startMin < 16 * 60
+plot(showRange and inRth ? orHi : na, "Range high", color.new(color.blue, 0), 1, plot.style_linebr)
+plot(showRange and inRth ? orLo : na, "Range low",  color.new(color.blue, 0), 1, plot.style_linebr)
+plot(showRange and inRth and not na(orHi) ? (orHi + orLo) / 2 : na, "Range mid", color.new(color.blue, 60), 1, plot.style_linebr)
+plot(fired and inRth ? entry : na, "Entry",  color.new(color.white, 0), 1, plot.style_linebr)
+plot(fired and inRth ? stop : na,   "Stop",   color.new(color.red, 0),   2, plot.style_linebr)
+plot(fired and inRth ? target : na, "Target", color.new(color.green, 0), 2, plot.style_linebr)
+bgcolor(inRange ? color.new(color.blue, 92) : na, title = "Opening range")
