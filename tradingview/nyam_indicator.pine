@@ -27,7 +27,8 @@ entryTo   = input.int(1100, "Entries until (HHMM ET)")
 touchMin  = input.int(30,   "PD array touch window (minutes)")
 dispX     = input.float(1.3, "Displacement (x average body)", step = 0.1)
 bufTicks  = input.int(2,    "Stop buffer (ticks)")
-showFvg   = input.bool(true, "Show 15m/1H FVGs")
+showFvg   = input.bool(true, "Show FVG boxes")
+fvgShow   = input.string("Chart timeframe", "Which FVGs to show", options = ["Chart timeframe", "15m + 1H (PD arrays)", "15m", "1H", "5m"], tooltip = "Chart timeframe: a 5m chart shows 5m FVGs, 15m shows 15m, 1H shows 1H; 30s and 1m charts show 5m. Only the drawing changes: sweeps always use the 15m/1H FVGs.")
 showLvls  = input.bool(true, "Show levels")
 
 TZ = "America/New_York"
@@ -86,7 +87,13 @@ h4L := new4h ? low : math.min(nz(h4L, low), low)
 asiaDone = not between(2000, 2400) and not na(asiaH) and hmNow < 1800
 ldnDone = hmNow >= 500 and hmNow < 1800 and not na(ldnH)
 
-// ---------------------------------------------------------------- 15m / 1H FVGs (confirmed candles only)
+// ---------------------------------------------------------------- FVGs (confirmed candles only)
+// 15m and 1H are the PD arrays the sweep needs; 5m is drawn only (for the 30s/1m entry)
+chartMin = timeframe.in_seconds() / 60
+autoTf = chartMin <= 5 ? 5 : chartMin == 15 ? 15 : chartMin == 60 ? 60 : 0      // 0 = none matches: show 15m + 1H
+visible(tf) =>
+    fvgShow == "Chart timeframe" ? (autoTf == 0 ? tf != 5 : tf == autoTf) : fvgShow == "15m + 1H (PD arrays)" ? tf != 5 : fvgShow == "15m" ? tf == 15 : fvgShow == "1H" ? tf == 60 : tf == 5
+tfName(tf) => tf == 60 ? "1H" : str.tostring(tf) + "m"
 fvg() =>
     bull = low[1] > high[3]
     bear = high[1] < low[3]
@@ -94,34 +101,43 @@ fvg() =>
 
 [b15, b15bot, b15top, s15, s15bot, s15top] = request.security(syminfo.tickerid, "15", fvg(), lookahead = barmerge.lookahead_on, gaps = barmerge.gaps_on)
 [b60, b60bot, b60top, s60, s60bot, s60top] = request.security(syminfo.tickerid, "60", fvg(), lookahead = barmerge.lookahead_on, gaps = barmerge.gaps_on)
+[b05, b05bot, b05top, s05, s05bot, s05top] = request.security(syminfo.tickerid, "5", fvg(), lookahead = barmerge.lookahead_on, gaps = barmerge.gaps_on)
 
 var array<float> zBot = array.new<float>()
 var array<float> zTop = array.new<float>()
 var array<int> zDir = array.new<int>()     // 1 bullish, -1 bearish
+var array<int> zTf = array.new<int>()      // 5, 15 or 60
 var array<box> zBox = array.new<box>()     // its box on the chart (deleted when the FVG is inversed)
 
-addZone(bot, top, dir) =>
+addZone(bot, top, dir, tf) =>
     box bx = na
-    if showFvg
-        bx := box.new(bar_index, top, bar_index, bot, border_color = dir == 1 ? color.new(color.teal, 60) : color.new(color.maroon, 60), bgcolor = dir == 1 ? color.new(color.teal, 90) : color.new(color.maroon, 90))
-    array.push(zBot, bot)
-    array.push(zTop, top)
-    array.push(zDir, dir)
-    array.push(zBox, bx)
-    if array.size(zBot) > 40
+    if showFvg and visible(tf)
+        bx := box.new(bar_index, top, bar_index, bot, border_color = dir == 1 ? color.new(color.teal, 60) : color.new(color.maroon, 60), bgcolor = dir == 1 ? color.new(color.teal, 90) : color.new(color.maroon, 90), text = tfName(tf) + (dir == 1 ? " bull FVG" : " bear FVG"), text_size = size.tiny, text_color = dir == 1 ? color.teal : color.maroon, text_halign = text.align_left, text_valign = text.align_center)
+    if tf != 5 or not na(bx)                   // 5m zones are kept only when drawn
+        array.push(zBot, bot)
+        array.push(zTop, top)
+        array.push(zDir, dir)
+        array.push(zTf, tf)
+        array.push(zBox, bx)
+    if array.size(zBot) > 60
         array.shift(zBot)
         array.shift(zTop)
         array.shift(zDir)
+        array.shift(zTf)
         box.delete(array.shift(zBox))
 
 if b15 == true
-    addZone(b15bot, b15top, 1)
+    addZone(b15bot, b15top, 1, 15)
 if s15 == true
-    addZone(s15bot, s15top, -1)
+    addZone(s15bot, s15top, -1, 15)
 if b60 == true
-    addZone(b60bot, b60top, 1)
+    addZone(b60bot, b60top, 1, 60)
 if s60 == true
-    addZone(s60bot, s60top, -1)
+    addZone(s60bot, s60top, -1, 60)
+if b05 == true
+    addZone(b05bot, b05top, 1, 5)
+if s05 == true
+    addZone(s05bot, s05top, -1, 5)
 
 // drop zones a close has broken through; remember the last time price touched one in the bias direction
 var int lastTouch = 0
@@ -130,17 +146,19 @@ if array.size(zBot) > 0
         bot = array.get(zBot, i)
         top = array.get(zTop, i)
         dir = array.get(zDir, i)
+        tf = array.get(zTf, i)
         broken = dir == 1 ? close < bot : close > top     // a close through the far side = inversed
         if broken
             array.remove(zBot, i)
             array.remove(zTop, i)
             array.remove(zDir, i)
+            array.remove(zTf, i)
             box.delete(array.remove(zBox, i))             // gone from the chart too
         else
             bx = array.get(zBox, i)
             if not na(bx)
                 box.set_right(bx, bar_index)              // still live: stretch it to the current candle
-            if dir == bias and low <= top and high >= bot
+            if tf != 5 and dir == bias and low <= top and high >= bot     // only 15m/1H count as PD arrays
                 lastTouch := time
 pdTouched = time - lastTouch <= touchMin * 60000
 
