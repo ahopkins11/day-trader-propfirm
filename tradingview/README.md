@@ -22,6 +22,25 @@ TradingView doesn't run the Python tools and can't take orders from them. Here's
 "Any alert() function call". It fires once when the breakout bar closes, and
 again at the flat time if a trade is still open.
 
+## NYAM indicator (nyam_indicator.pine)
+
+The NYAM rules as a heads-up: it marks PDH/PDL, previous NYAM, Asia and London,
+draws 15m/1H FVGs, and fires two alerts:
+
+1. **SWEEP**: liquidity taken (from 5:00 AM) while price touched a 15m/1H FVG
+   in the bias direction within 30 minutes. *Setup forming: drop to 30s.*
+2. **5m iFVG**: a 5m candle closes through the last opposite 5m FVG with a body
+   at least 1.3x the recent average, 9:30-11:00. Shows the stop (2 ticks beyond
+   the sweep) and the nearest level ahead, with its distance in R from the 5m close.
+
+You pick the precise entry on the 30-second chart. Add it the same way as the
+ORB indicator; it works on 30s, 1m and 5m charts. Set Bias to long/short/none
+in its settings if you read the bias yourself each morning.
+
+Logging: record your actual entry, stop and result with
+`python3 prop-risk/check.py account trade --pnl <dollars>` so your 30s entries
+can be compared with the 5m backtest later.
+
 ## One paper trade
 
 1. The alert fires, or `/prop-entry check MES` says TRIGGERED.

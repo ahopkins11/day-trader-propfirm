@@ -1,0 +1,253 @@
+//@version=6
+// =============================================================================
+//  NYAM setup - day-trader-propfirm
+//  The same rules as strategies/nyam.py, as a heads-up on your chart. It tells
+//  you WHEN a setup is forming; you choose the exact entry on the 30s/1m chart.
+//
+//  1. Bias (auto: yesterday's close vs the day before's midpoint, or set it)
+//  2. Levels: PDH/PDL, previous NYAM, Asia, London, today's completed 4H candles
+//  3. SWEEP: liquidity taken (from 5:00 AM) while price touched a 15m/1H FVG in
+//     the last 30 minutes  -> alert "setup forming"
+//  4. iFVG: a 5m candle closes through the last opposite 5m FVG with a body
+//     >= 1.3x the average of the last 10, between 9:30 and 11:00 -> alert
+//  5. Stop line: 2 ticks beyond the sweep's extreme. Target line: the nearest
+//     marked level ahead (PDH/PDL, prev NYAM, Asia, London, today's 4H). The
+//     Python tools also use 1H swings and past 4H candles: check with prop-entry.
+//
+//  Works on any chart up to 5 minutes (30s, 1m, 5m) of MNQ1!, MES1!, NQ1!, ES1!.
+//  Alerts: Create Alert > Condition: this indicator > "Any alert() function call".
+//  Not financial advice. A signal is the rule firing, not a reason to trade.
+// =============================================================================
+indicator("NYAM setup - day-trader-propfirm", overlay = true, max_labels_count = 300, max_boxes_count = 200)
+
+biasIn    = input.string("auto", "Bias", options = ["auto", "long", "short", "none"])
+sweepFrom = input.int(500,  "Sweeps count from (HHMM ET)")
+entryFrom = input.int(930,  "Entries from (HHMM ET)")
+entryTo   = input.int(1100, "Entries until (HHMM ET)")
+touchMin  = input.int(30,   "PD array touch window (minutes)")
+dispX     = input.float(1.3, "Displacement (x average body)", step = 0.1)
+bufTicks  = input.int(2,    "Stop buffer (ticks)")
+showFvg   = input.bool(true, "Show 15m/1H FVGs")
+showLvls  = input.bool(true, "Show levels")
+
+TZ = "America/New_York"
+hmNow = hour(time, TZ) * 100 + minute(time, TZ)
+between(a, b) => hmNow >= a and hmNow < b
+
+// ---------------------------------------------------------------- bias (daily candles, 6 PM-5 PM)
+[pdh, pdl, pdc, ppdh, ppdl] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1], high[2], low[2]], lookahead = barmerge.lookahead_on)
+autoBias = pdc > (ppdh + ppdl) / 2 ? 1 : pdc < (ppdh + ppdl) / 2 ? -1 : 0
+bias = biasIn == "long" ? 1 : biasIn == "short" ? -1 : biasIn == "none" ? 0 : autoBias
+
+// ---------------------------------------------------------------- session levels
+newDay = ta.change(time("D")) != 0
+var float asiaH = na
+var float asiaL = na
+var float ldnH = na
+var float ldnL = na
+var float nyH = na
+var float nyL = na
+var float pnyH = na
+var float pnyL = na
+var float h4H = na
+var float h4L = na
+var array<float> h4Highs = array.new<float>()
+var array<float> h4Lows = array.new<float>()
+
+if newDay
+    pnyH := nyH
+    pnyL := nyL
+    asiaH := na
+    asiaL := na
+    ldnH := na
+    ldnL := na
+    nyH := na
+    nyL := na
+    array.clear(h4Highs)
+    array.clear(h4Lows)
+if between(2000, 2400)
+    asiaH := na(asiaH) ? high : math.max(asiaH, high)
+    asiaL := na(asiaL) ? low : math.min(asiaL, low)
+if between(200, 500)
+    ldnH := na(ldnH) ? high : math.max(ldnH, high)
+    ldnL := na(ldnL) ? low : math.min(ldnL, low)
+if between(930, 1100)
+    nyH := na(nyH) ? high : math.max(nyH, high)
+    nyL := na(nyL) ? low : math.min(nyL, low)
+
+// 4H candles of the day (open 6 PM, 10 PM, 2 AM, 6 AM, 10 AM, 2 PM)
+new4h = ta.change(time("240")) != 0
+if new4h and not newDay and not na(h4H)
+    array.push(h4Highs, h4H)
+    array.push(h4Lows, h4L)
+h4H := new4h ? high : math.max(nz(h4H, high), high)
+h4L := new4h ? low : math.min(nz(h4L, low), low)
+
+asiaDone = not between(2000, 2400) and not na(asiaH) and hmNow < 1800
+ldnDone = hmNow >= 500 and hmNow < 1800 and not na(ldnH)
+
+// ---------------------------------------------------------------- 15m / 1H FVGs (confirmed candles only)
+fvg() =>
+    bull = low[1] > high[3]
+    bear = high[1] < low[3]
+    [bull, high[3], low[1], bear, high[1], low[3]]
+
+[b15, b15bot, b15top, s15, s15bot, s15top] = request.security(syminfo.tickerid, "15", fvg(), lookahead = barmerge.lookahead_on, gaps = barmerge.gaps_on)
+[b60, b60bot, b60top, s60, s60bot, s60top] = request.security(syminfo.tickerid, "60", fvg(), lookahead = barmerge.lookahead_on, gaps = barmerge.gaps_on)
+
+var array<float> zBot = array.new<float>()
+var array<float> zTop = array.new<float>()
+var array<int> zDir = array.new<int>()     // 1 bullish, -1 bearish
+
+addZone(bot, top, dir) =>
+    array.push(zBot, bot)
+    array.push(zTop, top)
+    array.push(zDir, dir)
+    if array.size(zBot) > 40
+        array.shift(zBot)
+        array.shift(zTop)
+        array.shift(zDir)
+    if showFvg
+        box.new(bar_index, top, bar_index + 30, bot, border_color = dir == 1 ? color.new(color.teal, 60) : color.new(color.maroon, 60), bgcolor = dir == 1 ? color.new(color.teal, 90) : color.new(color.maroon, 90))
+
+if b15 == true
+    addZone(b15bot, b15top, 1)
+if s15 == true
+    addZone(s15bot, s15top, -1)
+if b60 == true
+    addZone(b60bot, b60top, 1)
+if s60 == true
+    addZone(s60bot, s60top, -1)
+
+// drop zones a close has broken through; remember the last time price touched one in the bias direction
+var int lastTouch = 0
+if array.size(zBot) > 0
+    for i = array.size(zBot) - 1 to 0
+        bot = array.get(zBot, i)
+        top = array.get(zTop, i)
+        dir = array.get(zDir, i)
+        broken = dir == 1 ? close < bot : close > top
+        if broken
+            array.remove(zBot, i)
+            array.remove(zTop, i)
+            array.remove(zDir, i)
+        else if dir == bias and low <= top and high >= bot
+            lastTouch := time
+pdTouched = time - lastTouch <= touchMin * 60000
+
+// ---------------------------------------------------------------- the sweep
+var bool takenPdl = false
+var bool takenPny = false
+var bool takenAsia = false
+var bool takenLdn = false
+var array<bool> taken4h = array.new<bool>()
+var bool armed = false
+var float ext = na
+var int fired = 0
+if newDay
+    takenPdl := false
+    takenPny := false
+    takenAsia := false
+    takenLdn := false
+    array.clear(taken4h)
+    armed := false
+    ext := na
+    fired := 0
+while array.size(taken4h) < array.size(h4Lows)
+    array.push(taken4h, false)
+
+sweepWindow = hmNow >= sweepFrom and hmNow < entryTo
+crossed(level) => bias == 1 ? low < level : high > level
+sweptName = ""
+if sweepWindow and bias != 0
+    if not takenPdl and crossed(bias == 1 ? pdl : pdh)
+        takenPdl := true
+        sweptName := bias == 1 ? "PDL" : "PDH"
+    if not takenPny and not na(pnyH) and crossed(bias == 1 ? pnyL : pnyH)
+        takenPny := true
+        sweptName := "prev NYAM " + (bias == 1 ? "low" : "high")
+    if not takenAsia and asiaDone and crossed(bias == 1 ? asiaL : asiaH)
+        takenAsia := true
+        sweptName := "Asia " + (bias == 1 ? "low" : "high")
+    if not takenLdn and ldnDone and crossed(bias == 1 ? ldnL : ldnH)
+        takenLdn := true
+        sweptName := "London " + (bias == 1 ? "low" : "high")
+    if array.size(h4Lows) > 0
+        for i = 0 to array.size(h4Lows) - 1
+            if not array.get(taken4h, i) and crossed(bias == 1 ? array.get(h4Lows, i) : array.get(h4Highs, i))
+                array.set(taken4h, i, true)
+                sweptName := "4H " + (bias == 1 ? "low" : "high")
+
+if sweptName != "" and pdTouched
+    armed := true
+    ext := bias == 1 ? low : high
+    label.new(bar_index, bias == 1 ? low : high, "SWEEP " + sweptName + "\ninto 15m/1H FVG", style = bias == 1 ? label.style_label_up : label.style_label_down, color = color.new(color.orange, 10), textcolor = color.white, size = size.small)
+    alert(syminfo.ticker + " NYAM: " + sweptName + " swept into a 15m/1H FVG. Setup forming: drop to 30s.", alert.freq_once_per_bar)
+if armed
+    ext := bias == 1 ? math.min(ext, low) : math.max(ext, high)
+
+// ---------------------------------------------------------------- 5m iFVG with displacement (confirmed 5m candles)
+ifvg(x) =>
+    var float bearTop = na
+    var float bullBot = na
+    if high < low[2]
+        bearTop := low[2]
+    if low > high[2]
+        bullBot := high[2]
+    body = math.abs(close - open)
+    avgB = ta.sma(body, 10)[1]
+    disp = body >= x * avgB
+    up = not na(bearTop) and close > bearTop and close > open and disp
+    dn = not na(bullBot) and close < bullBot and close < open and disp
+    if up
+        bearTop := na
+    if dn
+        bullBot := na
+    [up[1], dn[1], close[1]]
+
+[up5, dn5, c5] = request.security(syminfo.tickerid, "5", ifvg(dispX), lookahead = barmerge.lookahead_on, gaps = barmerge.gaps_on)
+
+// nearest marked level ahead of the price in the trade's direction
+nearest(px) =>
+    float best = na
+    lv = array.from(pdh, pdl, pnyH, pnyL, asiaH, asiaL, ldnH, ldnL)
+    for v in lv
+        if not na(v) and (bias == 1 ? v > px : v < px)
+            best := na(best) ? v : bias == 1 ? math.min(best, v) : math.max(best, v)
+    if array.size(h4Highs) > 0
+        for i = 0 to array.size(h4Highs) - 1
+            v = bias == 1 ? array.get(h4Highs, i) : array.get(h4Lows, i)
+            if bias == 1 ? v > px : v < px
+                best := na(best) ? v : bias == 1 ? math.min(best, v) : math.max(best, v)
+    best
+
+inEntry = hmNow >= entryFrom and hmNow < entryTo
+var float stopLvl = na
+var float dolLvl = na
+trigger = armed and inEntry and fired == 0 and ((bias == 1 and up5 == true) or (bias == -1 and dn5 == true))
+if trigger
+    fired := 1
+    stopLvl := bias == 1 ? ext - bufTicks * syminfo.mintick : ext + bufTicks * syminfo.mintick
+    dolLvl := nearest(c5)
+    risk = math.abs(c5 - stopLvl)
+    rr = na(dolLvl) or risk == 0 ? na : math.abs(dolLvl - c5) / risk
+    txt = "5m iFVG " + (bias == 1 ? "LONG" : "SHORT") + "\n5m close " + str.tostring(c5, format.mintick) + "\nstop " + str.tostring(stopLvl, format.mintick) + "\nDOL " + (na(dolLvl) ? "none" : str.tostring(dolLvl, format.mintick) + " (" + str.tostring(rr, "#.##") + "R from 5m close)") + (not na(rr) and rr < 1.5 ? "\nDOL under 1.5R: skip" : "")
+    label.new(bar_index, bias == 1 ? low : high, txt, style = bias == 1 ? label.style_label_up : label.style_label_down, color = bias == 1 ? color.new(color.green, 10) : color.new(color.red, 10), textcolor = color.white, size = size.small)
+    alert(syminfo.ticker + " NYAM " + txt, alert.freq_once_per_bar)
+
+if newDay
+    stopLvl := na
+    dolLvl := na
+
+// ---------------------------------------------------------------- drawing
+plot(showLvls ? pdh : na, "PDH", color.new(color.gray, 20), 1, plot.style_linebr)
+plot(showLvls ? pdl : na, "PDL", color.new(color.gray, 20), 1, plot.style_linebr)
+plot(showLvls and asiaDone ? asiaH : na, "Asia high", color.new(color.purple, 30), 1, plot.style_linebr)
+plot(showLvls and asiaDone ? asiaL : na, "Asia low", color.new(color.purple, 30), 1, plot.style_linebr)
+plot(showLvls and ldnDone ? ldnH : na, "London high", color.new(color.blue, 30), 1, plot.style_linebr)
+plot(showLvls and ldnDone ? ldnL : na, "London low", color.new(color.blue, 30), 1, plot.style_linebr)
+plot(showLvls ? pnyH : na, "Prev NYAM high", color.new(color.orange, 40), 1, plot.style_linebr)
+plot(showLvls ? pnyL : na, "Prev NYAM low", color.new(color.orange, 40), 1, plot.style_linebr)
+plot(stopLvl, "Stop", color.new(color.red, 0), 2, plot.style_linebr)
+plot(dolLvl, "Target (nearest DOL)", color.new(color.green, 0), 2, plot.style_linebr)
+bgcolor(bias == 1 ? color.new(color.green, 97) : bias == -1 ? color.new(color.red, 97) : na, title = "Bias")
