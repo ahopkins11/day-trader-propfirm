@@ -63,6 +63,8 @@ class TimeMachine(unittest.TestCase):
         self.assertEqual(h["sessions"], 59)
         self.assertEqual(h["fired"], h["target"] + h["stop"] + h["flat"])
         self.assertTrue(all(t["date"] < "2026-10-19" for t in h["trades"]))
+        for t in h["trades"]:
+            self.assertTrue(t["exit_at"] is None or t["exit_at"] >= t["entry_at"], t)
 
 
 class Sizing(unittest.TestCase):

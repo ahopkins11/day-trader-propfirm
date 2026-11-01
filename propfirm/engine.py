@@ -187,8 +187,10 @@ def history(strategy, params, bars, spec, cfg, before_day, n=59):
         trig_end = datetime.datetime.strptime(plan["bar_close"], "%Y-%m-%d %H:%M")
         after = [b for b in data.session_bars(bars, day, spec, bar_minutes=step) if b["t"] >= trig_end]
         w = walk(plan, after, flat)
-        rows.append({"date": day.isoformat(), "side": plan["side"], "entry": plan["entry"],
-                     "stop": plan["stop"], "target": plan["target"], "at": plan["bar_close"][11:], **w})
+        row = {"date": day.isoformat(), "side": plan["side"], "entry": plan["entry"],
+               "stop": plan["stop"], "target": plan["target"], "entry_at": plan["bar_close"][11:]}
+        row.update(outcome=w["outcome"], exit=w["exit"], exit_at=w["at"], r=w["r"])
+        rows.append(row)
     sessions = len(data.past_sessions(bars, before_day, spec, n=n, bar_minutes=step))
     tally = {k: sum(1 for r in rows if r["outcome"] == k) for k in ("target", "stop", "flat")}
     total_r = round(sum(r["r"] for r in rows), 2)

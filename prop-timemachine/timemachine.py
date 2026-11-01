@@ -96,8 +96,9 @@ def main(argv=None):
         before = datetime.date.fromisoformat(a.before) if a.before else clock.parse_now(None).date()
         h = engine.history(strat, params, data.load(spec, offline=a.offline, days=60), spec, cfg, before)
         for t in h["trades"]:
-            print("  %s %s %-5s entry %s -> %-6s %s  %+.2fR" % (t["date"], t["at"], t["side"], t["entry"],
-                                                              t["outcome"], t["exit"], t["r"]))
+            print("  %s  %s in at %-8s -> %-6s at %-14s %+.2fR" % (
+                t["date"], t["side"], "%s %s" % (t["entry_at"], t["entry"]), t["outcome"],
+                "%s %s" % (t["exit_at"] or "close", t["exit"]), t["r"]))
         print("%s on %d sessions: fired %d, target %d, stop %d, neither %d, total %+.2fR"
               % (strat.NAME, h["sessions"], h["fired"], h["target"], h["stop"], h["flat"], h["total_r"]))
         return
