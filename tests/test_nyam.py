@@ -112,7 +112,7 @@ class NyamKnownDay(unittest.TestCase):
         cfg, strat, p = setup()
         r = engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 9, 32), ES, cfg)
         self.assertEqual(r["status"], "waiting")
-        self.assertIn("waiting for a 5m iFVG", r["reason"])
+        self.assertIn("no displacement iFVG yet", r["reason"])
 
     def test_pre_market_status(self):
         cfg, strat, p = setup()
@@ -145,6 +145,26 @@ class NyamKnownDay(unittest.TestCase):
         t = h["trades"][0]
         self.assertEqual((t["entry_at"], t["outcome"], t["exit"], t["exit_at"]), ("09:40", "target", 6030.0, "09:50"))
         self.assertAlmostEqual(t["r"], 10 / 6.0, places=2)
+
+
+class KeepWatching(unittest.TestCase):
+    def test_weak_close_then_later_displacement(self):
+        """9:35 closes through 6019 weakly; 9:40 closes through with displacement -> entry 6020.25."""
+        bars = week()
+        for b in bars:
+            if b["t"] == DT(2026, 10, 21, 9, 35):
+                b.update(o=6019.0, h=6019.5, l=6018.75, c=6019.25)
+            if b["t"] == DT(2026, 10, 21, 9, 40):
+                b.update(o=6019.25, h=6021.0, l=6019.0, c=6020.25)
+        cfg, strat, p = setup()
+        r = engine.evaluate_day(strat, p, bars, DT(2026, 10, 21, 9, 46), ES, cfg)
+        self.assertEqual(r["status"], "triggered", r["reason"])
+        self.assertEqual((r["plan"]["entry"], r["plan"]["stop"], r["plan"]["bar_close"][11:]), (6020.25, 6014.0, "09:45"))
+
+    def test_auto_bias_uses_the_midpoint(self):
+        cfg, strat, p = setup()
+        r = engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 8, 30), ES, cfg)
+        self.assertEqual(r["levels"]["bias"], "long")          # Tue close 6020 > Mon midpoint 6000
 
 
 class Breakeven(unittest.TestCase):

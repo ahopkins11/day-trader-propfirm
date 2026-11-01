@@ -27,8 +27,8 @@
     1H swing         a 1H high (low) above (below) the 1H candles either side
     FVG              three candles where candle 3's low is above candle 1's high
                      (bullish) or candle 3's high is below candle 1's low (bearish)
-    bias "auto"      long if yesterday closed above the day before's high, short
-                     if below its low, otherwise no trade. For live trading set
+    bias "auto"      long if yesterday closed above the day before's midpoint,
+                     short if below it. For live trading set
                      "bias": "long" / "short" / "none" each morning in
                      trader/config.json under strategy_params.
 =============================================================================
@@ -55,6 +55,7 @@ PARAMS = {
     "min_rr": 1.5,               # skip a setup whose nearest DOL is under 1.5R away
     "fvg_leg_bars": 12,          # the inverted FVG formed within 12 x 5m bars before the sweep
     "max_bars_after_sweep": 24,  # the iFVG must come within 2 hours of the sweep
+    "pd_touch_minutes": 30,      # the move into the sweep touched the PD array within this window
     "pd_timeframes": [15, 60],   # PD array = an FVG on these timeframes (minutes)
     "lookback_days": 3,          # how far back to look for PD arrays and 1H swings
     "breakeven": True,
@@ -171,9 +172,10 @@ def levels(all5, day, now):
             highs.append(("4H high %s" % c4["t"].strftime("%H:%M"), c4["h"], c4["end"]))
             lows.append(("4H low %s" % c4["t"].strftime("%H:%M"), c4["l"], c4["end"]))
     close = pbars[-1]["c"]
-    bias = "long" if close > hi(ppbars) else "short" if close < lo(ppbars) else "none"
+    mid = (hi(ppbars) + lo(ppbars)) / 2.0
+    bias = "long" if close > mid else "short" if close < mid else "none"
     return {"highs": highs, "lows": lows, "bias": bias, "prev_close": close,
-            "prev_prev_high": hi(ppbars), "prev_prev_low": lo(ppbars)}
+            "prev_prev_high": hi(ppbars), "prev_prev_low": lo(ppbars), "prev_prev_mid": mid}
 
 
 # ---------------------------------------------------------------- the setup
@@ -195,8 +197,8 @@ def evaluate(bars, p, ctx):
     info = {"bias": bias, "bias_source": p["bias"]}
     if bias not in ("long", "short"):
         return {"status": "waiting", "signal": None, "levels": info,
-                "reason": "no bias today (yesterday closed %.2f, inside the day before's %.2f-%.2f)"
-                          % (lv["prev_close"], lv["prev_prev_low"], lv["prev_prev_high"])}
+                "reason": "no bias today (yesterday closed %.2f, exactly the day before's midpoint)"
+                          % lv["prev_close"] if p["bias"] == "auto" else "bias set to none"}
     long_ = bias == "long"
     liq = lv["lows"] if long_ else lv["highs"]              # what gets swept
     dols = lv["highs"] if long_ else lv["lows"]             # where it delivers
@@ -233,11 +235,16 @@ def evaluate(bars, p, ctx):
                 break
 
     def pd_array(b):
+        """An HTF FVG that the sweep candle, or any candle in the move into it
+        (pd_touch_minutes), traded into while the FVG was still intact."""
+        lead = all5[bisect.bisect_left(times, b["t"] - datetime.timedelta(minutes=p["pd_touch_minutes"])):
+                    bisect.bisect_right(times, b["t"])]
         for f in reversed(htf):
-            if f["formed"] > b["t"] or (f["broken_at"] is not None and f["broken_at"] < b["t"]):
-                continue
-            if b["l"] <= f["top"] and b["h"] >= f["bottom"]:
-                return f
+            for x in reversed(lead):
+                if f["formed"] > x["t"] or (f["broken_at"] is not None and f["broken_at"] < x["t"]):
+                    continue
+                if x["l"] <= f["top"] and x["h"] >= f["bottom"]:
+                    return f
         return None
 
     for j, b in enumerate(scan):
@@ -269,6 +276,7 @@ def formed_close_breaks(x, f, long_):
 def look_for_ifvg(j, sweep, name, f_htf, scan, m5, opp, dols, p, ctx, tick, long_, untouched_since):
     ext = sweep["l"] if long_ else sweep["h"]
     leg_start = sweep["t"] - M5 * p["fvg_leg_bars"]
+    note = ""
     for k in range(j + 1, min(len(scan), j + 1 + p["max_bars_after_sweep"])):
         bk = scan[k]
         cands = [f for f in opp if leg_start <= f["t"] and f["formed"] <= bk["t"]]
@@ -280,15 +288,18 @@ def look_for_ifvg(j, sweep, name, f_htf, scan, m5, opp, dols, p, ctx, tick, long
         if not through:
             ext = min(ext, bk["l"]) if long_ else max(ext, bk["h"])
             continue
-        # first close through the FVG: it must be displacement, inside the entry window
+        # a close through the FVG: it counts only with displacement, inside the entry
+        # window; a weak close (or one before 9:30) doesn't end the setup, keep watching
         prior = [x for x in m5 if x["t"] < bk["t"]][-p["body_lookback"]:]
         avg = sum(abs(x["c"] - x["o"]) for x in prior) / float(len(prior)) if prior else 0.0
         body = bk["c"] - bk["o"] if long_ else bk["o"] - bk["c"]
-        if body <= 0 or body < p["displacement_x"] * avg:
-            return None, "%s swept, but the FVG was closed through without displacement at %s" % (name, clock.hm(bk["t"]))
-        if not ctx["can_enter"](bk):
-            return None, "%s swept, iFVG at %s was outside the entry window" % (name, clock.hm(bk["t"]))
         ext = min(ext, bk["l"]) if long_ else max(ext, bk["h"])
+        if body <= 0 or body < p["displacement_x"] * avg:
+            note = "; closed through without displacement at %s" % clock.hm(bk["t"])
+            continue
+        if not ctx["can_enter"](bk):
+            note = "; displacement through it at %s, before the entry window" % clock.hm(bk["t"])
+            continue
         entry = bk["c"]
         stop = ext - p["stop_buffer_ticks"] * tick if long_ else ext + p["stop_buffer_ticks"] * tick
         targets = [(price, dn) for dn, price, formed in dols
@@ -316,4 +327,5 @@ def look_for_ifvg(j, sweep, name, f_htf, scan, m5, opp, dols, p, ctx, tick, long
                 "breakeven": be, "bar": bar,
                 "why": "%s swept into %dm FVG, 5m iFVG %.2f-%.2f, target %s" % (
                     name, f_htf["tf"], f["bottom"], f["top"], tname)}, ""
-    return None, "%s swept at %s into a %dm FVG; waiting for a 5m iFVG" % (name, clock.hm(sweep["t"]), f_htf["tf"])
+    return None, "%s swept at %s into a %dm FVG; no displacement iFVG yet%s" % (
+        name, clock.hm(sweep["t"]), f_htf["tf"], note)
