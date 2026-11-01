@@ -52,6 +52,7 @@ def _size(plan, spec, cfg, st):
             "loss_at_stop_usd": round(per * n, 2),
             "gain_at_target_usd": round(float(plan["reward_usd_per_contract"]) * n, 2),
             "reward_risk": plan["reward_risk"], "date": plan["date"], "flat_by": plan["flat_by"],
+            "breakeven": plan.get("breakeven"),
             "strategy": plan.get("strategy"), "limited_by": limit, "budget_usd": round(budget, 2)}
 
 

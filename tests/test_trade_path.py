@@ -162,6 +162,18 @@ class Rules(unittest.TestCase):
         r = rules.check(self.order(), c, state(), DT(2026, 10, 19, 10, 6))
         self.assertEqual(r["verdict"], "PASS")
 
+    def test_daily_stop_rule(self):
+        c = cfg()
+        c["personal"]["daily_stop"] = {"losses": 1, "breakevens": 2, "wins": 2}
+        now = DT(2026, 10, 19, 9, 56)
+        st = rules.record_trade(state(), 0.0, c)
+        self.assertEqual(rules.check(self.order(), c, st, now)["verdict"], "PASS")
+        st = rules.record_trade(st, -2.8, c, result="be")
+        r = rules.check(self.order(), c, st, now)
+        self.assertTrue(any(x.startswith("daily stop") for x in r["reasons"]), r["reasons"])
+        st2 = rules.record_trade(state(), -100.0, c)
+        self.assertEqual(rules.check(self.order(), c, st2, now)["verdict"], "BLOCK")
+
     def test_live_stage_warns(self):
         c = cfg()
         c["account"]["stage"] = "live"

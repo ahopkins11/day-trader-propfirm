@@ -16,6 +16,8 @@ else in the repo decides when to trade. It's the upstream opening range
 breakout: the first 5-minute close outside the 9:30-9:45 range, stop at the
 range midpoint, 1R target.
 
+- **`strategies/nyam.py`** is AJ's NYAM sweep + iFVG setup. Switch with
+  `config.nyam.example.json` or `--strategy nyam`.
 - Tweak it from `trader/config.json` (`strategy_params`) without touching code.
 - Swap in your own: copy `strategies/template.py`, write the rule, set
   `"strategy": "your_name"`. Full guide: [strategies/README.md](strategies/README.md).

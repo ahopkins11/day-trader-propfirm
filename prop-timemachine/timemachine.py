@@ -61,10 +61,11 @@ def describe(doc):
     p = doc["plan"]
     lines = ["Time Machine: %s %s %s, %s" % (doc["symbol"], p["side"].upper(), p["entry"], doc["date"]),
              "  %d replays of the rest of the day (seed %s), flat by %s:" % (mc["sims"], mc["seed"], doc["flat_by"]),
-             "    target first %.1f %%   stop first %.1f %%   still open at the flat time %.1f %%" % (
-                 mc["target_pct"], mc["stop_pct"], mc["flat_pct"]),
-             "  The same strategy on the last %d sessions: fired %d times, %d hit the target, %d the stop, %d neither (%+.2fR)"
-             % (h["sessions"], h["fired"], h["target"], h["stop"], h["flat"], h["total_r"]),
+             "    target first %.1f %%   stop first %.1f %%%s   still open at the flat time %.1f %%" % (
+                 mc["target_pct"], mc["stop_pct"],
+                 ("   breakeven %.1f %%" % mc["breakeven_pct"]) if "breakeven_pct" in mc else "", mc["flat_pct"]),
+             "  The same strategy on the last %d sessions: fired %d times, %d hit the target, %d the stop, %d breakeven, %d neither (%+.2fR)"
+             % (h["sessions"], h["fired"], h["target"], h["stop"], h.get("breakeven", 0), h["flat"], h["total_r"]),
              "  Verdict: " + doc["verdict"],
              "  A simulation, not a prediction."]
     return "\n".join(lines)
@@ -86,7 +87,7 @@ def max_drawdown(rs):
     return dd
 
 
-def compare(symbols, cfg, strat, params, before, loader, variants=VARIANTS):
+def compare(symbols, cfg, strat, params, before, loader, variants=None):
     """Run each variant on each symbol over the same days. Returns rows and per-variant totals."""
     rows, totals = [], []
     bars_by = {}
@@ -96,6 +97,11 @@ def compare(symbols, cfg, strat, params, before, loader, variants=VARIANTS):
             bars_by[sym] = (spec, loader(spec))
         except data.DataError as e:
             rows.append({"symbol": spec["symbol"], "variant": "-", "error": str(e)})
+    if variants is None:
+        if strat.NAME == "orb":
+            variants = VARIANTS
+        else:   # any other strategy: one row per market, as its file and the config define it
+            variants = [("%s as configured" % strat.NAME, cfg.get("bar_minutes") or 5, cfg["no_entries_after"])]
     for label, bm, last in variants:
         vcfg = dict(cfg, bar_minutes=bm, no_entries_after=last)
         all_trades = []
@@ -104,7 +110,8 @@ def compare(symbols, cfg, strat, params, before, loader, variants=VARIANTS):
             usd = sum(t["r"] * contracts.dollars(contracts.ticks_between(t["entry"], t["stop"], spec), spec)
                       for t in h["trades"])
             rows.append({"symbol": spec["symbol"], "variant": label, "sessions": h["sessions"], "trades": h["fired"],
-                         "wins": h["target"], "losses": h["stop"], "flat": h["flat"], "total_r": h["total_r"],
+                         "wins": h["target"], "losses": h["stop"], "be": h.get("breakeven", 0), "flat": h["flat"],
+                         "total_r": h["total_r"],
                          "max_dd_r": round(max_drawdown([t["r"] for t in h["trades"]]), 2),
                          "usd_1_contract": round(usd, 2)})
             all_trades += [dict(t, symbol=spec["symbol"]) for t in h["trades"]]
@@ -122,13 +129,13 @@ def compare(symbols, cfg, strat, params, before, loader, variants=VARIANTS):
 
 def show_compare(rows, totals, strat):
     print("%s: each version on each market, same days\n" % strat.NAME)
-    print("  %-5s %-34s %6s %5s %5s %5s %8s %7s %10s" % ("mkt", "version", "trades", "win", "loss", "flat", "total R", "max DD", "$ 1 contr"))
+    print("  %-5s %-34s %6s %5s %5s %5s %5s %8s %7s %10s" % ("mkt", "version", "trades", "win", "loss", "BE", "flat", "total R", "max DD", "$ 1 contr"))
     for r in rows:
         if "error" in r:
             print("  %-5s %s" % (r["symbol"], r["error"]))
             continue
-        print("  %-5s %-34s %6d %5d %5d %5d %+8.2f %7.2f %10.2f" % (r["symbol"], r["variant"], r["trades"], r["wins"],
-              r["losses"], r["flat"], r["total_r"], r["max_dd_r"], r["usd_1_contract"]))
+        print("  %-5s %-34s %6d %5d %5d %5d %5d %+8.2f %7.2f %10.2f" % (r["symbol"], r["variant"], r["trades"], r["wins"],
+              r["losses"], r["be"], r["flat"], r["total_r"], r["max_dd_r"], r["usd_1_contract"]))
     print("\nAll markets together:")
     print("  %-34s %6s %6s %8s %7s %7s %9s" % ("version", "trades", "win %", "total R", "avg R", "max DD", "markets +"))
     for t in totals:
@@ -156,6 +163,13 @@ def main(argv=None):
     hi.add_argument("--config")
     hi.add_argument("--strategy")
     hi.add_argument("--bar-minutes", type=int)
+    dy = sub.add_parser("days", help="why the strategy did or didn't trade, day by day")
+    dy.add_argument("symbol")
+    dy.add_argument("--before", help="YYYY-MM-DD (default today)")
+    dy.add_argument("--offline")
+    dy.add_argument("--config")
+    dy.add_argument("--strategy")
+    dy.add_argument("--bar-minutes", type=int)
     cp = sub.add_parser("compare", help="all three ORB versions on several markets")
     cp.add_argument("--symbols", default="MES,MNQ,MYM,M2K")
     cp.add_argument("--before", help="YYYY-MM-DD (default today)")
@@ -169,6 +183,21 @@ def main(argv=None):
         return
     cfg = cli.apply_bar_minutes(config.load(a.config), a)
     strat, params = config.load_strategy(cfg, name=a.strategy)
+    if a.cmd == "days":
+        spec = contracts.spec(a.symbol)
+        before = datetime.date.fromisoformat(a.before) if a.before else clock.parse_now(None).date()
+        bars = data.load(spec, offline=a.offline, days=60)
+        for day, _ in data.past_sessions(bars, before, spec, bar_minutes=engine.bar_minutes(strat, cfg)):
+            res = engine.evaluate_day(strat, params, bars, clock.session(day, spec)[1], spec, cfg)
+            why = res["reason"]
+            if res["status"] == "expired" and "(" in why:
+                why = why[why.index("(") + 1:-1]       # the strategy's own reason inside "no signal by ..."
+            if res["status"] == "triggered":
+                pl = res["plan"]
+                why = "TRADE %s %s at %s, stop %s, target %s: %s" % (pl["side"], pl["entry"], pl["bar_close"][11:],
+                                                                   pl["stop"], pl["target"], res["reason"])
+            print("  %s %s  %s" % (day.isoformat(), day.strftime("%a"), why))
+        return
     if a.cmd == "compare":
         before = datetime.date.fromisoformat(a.before) if a.before else clock.parse_now(None).date()
         syms = [s.strip() for s in a.symbols.split(",") if s.strip()]
@@ -187,8 +216,9 @@ def main(argv=None):
             print("  %s  %s in at %-8s -> %-6s at %-14s %+.2fR" % (
                 t["date"], t["side"], "%s %s" % (t["entry_at"], t["entry"]), t["outcome"],
                 "%s %s" % (t["exit_at"] or "close", t["exit"]), t["r"]))
-        print("%s, %d-minute bars, on %d sessions: fired %d, target %d, stop %d, neither %d, total %+.2fR"
-              % (strat.NAME, int(cfg["bar_minutes"]), h["sessions"], h["fired"], h["target"], h["stop"], h["flat"], h["total_r"]))
+        print("%s, %d-minute bars, on %d sessions: fired %d, target %d, stop %d, breakeven %d, neither %d, total %+.2fR"
+              % (strat.NAME, engine.bar_minutes(strat, cfg), h["sessions"], h["fired"], h["target"], h["stop"],
+                 h.get("breakeven", 0), h["flat"], h["total_r"]))
         return
     plan = config.read_json(cli.out_path("plan.json"))
     if not plan:

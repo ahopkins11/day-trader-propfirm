@@ -36,7 +36,7 @@ def load_state(cfg, today, base=None):
         st = {"balance": float(acct["starting_balance"]), "eod_high": float(acct["starting_balance"]),
               "date": today.isoformat(), "realized_today": 0.0, "trades_today": 0, "log": []}
     if st.get("date") != today.isoformat():
-        st.update(date=today.isoformat(), realized_today=0.0, trades_today=0)
+        st.update(date=today.isoformat(), realized_today=0.0, trades_today=0, results_today=[])
     return st
 
 
@@ -55,10 +55,13 @@ def floor(cfg, st):
     return round(f, 2)
 
 
-def record_trade(st, pnl, cfg):
+def record_trade(st, pnl, cfg, result=None):
     st["balance"] = round(float(st["balance"]) + pnl, 2)
     st["realized_today"] = round(float(st["realized_today"]) + pnl, 2)
     st["trades_today"] = int(st.get("trades_today") or 0) + 1
+    if result is None:
+        result = "win" if pnl > 0 else "loss" if pnl < 0 else "be"
+    st.setdefault("results_today", []).append(result)
     if cfg["account"].get("trailing") == "intraday":
         st["eod_high"] = max(float(st["eod_high"]), st["balance"])
     st.setdefault("log", []).append({"date": st["date"], "pnl": pnl, "balance": st["balance"]})
@@ -121,6 +124,12 @@ def check(order, cfg, st, now):
         reasons.append("trailing max loss: the account ends at $%.2f; the stop would leave $%.2f above it (buffer $%s)"
                        % (floor(cfg, st), float(st["balance"]) - loss - floor(cfg, st), me.get("buffer_usd", 0)))
 
+    rule = me.get("daily_stop")
+    res = st.get("results_today") or []
+    if rule and (res.count("loss") >= rule.get("losses", 99) or res.count("be") >= rule.get("breakevens", 99)
+                 or res.count("win") >= rule.get("wins", 99)):
+        reasons.append("daily stop: today is %s; your rule stops after %s loss(es), %s breakeven(s) or %s win(s)"
+                       % (", ".join(res), rule.get("losses", "-"), rule.get("breakevens", "-"), rule.get("wins", "-")))
     if int(st["trades_today"]) >= int(me["max_trades_per_day"]):
         reasons.append("trades: %d taken today, your max is %s" % (st["trades_today"], me["max_trades_per_day"]))
     rr = order.get("reward_risk")

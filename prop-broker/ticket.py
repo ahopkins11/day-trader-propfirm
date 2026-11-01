@@ -31,9 +31,11 @@ def ticket_text(o):
     act = "BUY" if o["side"] == "long" else "SELL"
     return ("%s %d %s at market, with a stop at %s (%d ticks) and a target at %s (%d ticks). "
             "If the stop fills at its price you lose about %s; at the target you make about %s. "
-            "Flat by %s ET either way." % (act, o["contracts"], o["symbol"], f(o["stop"]), o["stop_ticks"],
+            "Flat by %s ET either way.%s" % (act, o["contracts"], o["symbol"], f(o["stop"]), o["stop_ticks"],
                                           f(o["target"]), o["target_ticks"], cli.money(o["loss_at_stop_usd"]),
-                                          cli.money(o["gain_at_target_usd"]), o["flat_by"]))
+                                          cli.money(o["gain_at_target_usd"]), o["flat_by"],
+                                          (" Move the stop to %s by hand once price touches %s." % (f(o["entry"]), f(o["breakeven"])))
+                                          if o.get("breakeven") is not None else ""))
 
 
 def status(o, i, risk, now):

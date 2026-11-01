@@ -57,6 +57,8 @@ def describe(p):
         "  entry  %s" % f(p["entry"]),
         "  stop   %s  (%d ticks, %.2f points, $%.2f per contract)" % (f(p["stop"]), p["risk_ticks"], p["risk_points"], p["risk_usd_per_contract"]),
         "  target %s  (%d ticks, $%.2f per contract, %.2fR)" % (f(p["target"]), p["reward_ticks"], p["reward_usd_per_contract"], p["reward_risk"] or 0),
+        ("  breakeven: move the stop to %s once price touches %s" % (f(p["entry"]), f(p["breakeven"])))
+        if p.get("breakeven") is not None else "  breakeven: none set by this strategy",
         "  flat by %s ET either way" % p["flat_by"],
         "  %s is $%.2f a point; a stop is a plan, not a guarantee (gaps and fast markets fill past it)." % (s["symbol"], s["point_value"]),
     ])

@@ -8,6 +8,7 @@ prop firm rules and order ticket don't care which strategy you use.
 | file | what it is |
 |------|------------|
 | `orb.py` | **The ORB strategy** (opening range breakout), kept from upstream. The default. |
+| `nyam.py` | **AJ's NYAM setup #1**: sweep into a 15m/1H FVG, 5m iFVG with displacement, nearest HTF DOL. |
 | `template.py` | A blank strategy to copy when you write your own. |
 
 The active one is set in `trader/config.json`:
@@ -26,6 +27,31 @@ Change `strategy_params` in your config:
 - `stop`: `"mid"` (range midpoint) or `"range"` (the far side of the range)
 - `target_r`: 1.0 = 1R, 2.0 = 2R
 - `min_volume_x`: e.g. 1.5 = the breakout bar needs 1.5x the range's average volume
+
+## NYAM (strategies/nyam.py)
+
+Mechanical version of Primary Setup #1 from the NYAM playbook. The rules and
+every definition are written at the top of the file. Use
+`config.nyam.example.json` as `trader/config.json`.
+
+- **Bias:** `"bias": "auto"` (yesterday closed above the day before's high =
+  long, below its low = short, else no trade) or set `"long"`, `"short"` or
+  `"none"` each morning from your own Daily/4H/1H read.
+- **Daily stop:** 1 loss, 2 breakevens or 2 wins (`DAILY_STOP` in the file,
+  `personal.daily_stop` in the config for the live risk check).
+- **Breakeven:** the plan gives a price; once it trades, move the stop to the
+  entry by hand (TradingView and the bracket order won't do it for you).
+- **What it can't see:** clean vs choppy, PD array and DOL quality, order and
+  rejection blocks, OTE, the 10:00 4H-open setups and continuation trades.
+
+```
+python3 prop-timemachine/timemachine.py days MNQ --strategy nyam      # why each day did or didn't trade
+python3 prop-timemachine/timemachine.py history MNQ --strategy nyam   # every trade and the total
+python3 prop-timemachine/timemachine.py compare --strategy nyam       # MES, MNQ, MYM, M2K
+```
+
+Compare `days` with what you saw on those days: where the code and your eye
+disagree is where a rule needs changing, or where your discretion is the edge.
 
 ## Add your own strategy
 

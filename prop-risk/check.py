@@ -6,6 +6,7 @@ yours, and keep the account numbers those rules need.
   python3 prop-risk/check.py account show               # balance, trailing floor, room left today
   python3 prop-risk/check.py account set --balance 50250 [--eod-high 50400]
   python3 prop-risk/check.py account trade --pnl -137.50   # after a trade closes
+  python3 prop-risk/check.py account trade --pnl -2.80 --result be   # a scratch: counts as a breakeven
   python3 prop-risk/check.py account eod [--balance 50112.50]   # after the session: moves the trailing high
 
 Copy the real limits for your plan from your Topstep dashboard into
@@ -34,7 +35,8 @@ def show_account(cfg, st):
     print("  balance %s, end-of-day high %s" % (cli.money(float(st["balance"])), cli.money(float(st["eod_high"]))))
     print("  trailing max loss: the account ends at %s (%s below the balance)" % (
         cli.money(rules.floor(cfg, st)), cli.money(float(st["balance"]) - rules.floor(cfg, st))))
-    print("  today %s: realized %s, %d trades" % (st["date"], cli.money(float(st["realized_today"])), st["trades_today"]))
+    print("  today %s: realized %s, %d trades%s" % (st["date"], cli.money(float(st["realized_today"])), st["trades_today"],
+          (" (%s)" % ", ".join(st["results_today"])) if st.get("results_today") else ""))
     print("  room left today after your buffer: " + ", ".join("%s %s" % (k, cli.money(v)) for k, v in rm.items()))
     if acct.get("profit_target"):
         print("  profit target %s: %s to go" % (cli.money(float(acct["profit_target"])), cli.money(
@@ -52,6 +54,7 @@ def main(argv=None):
     ac.add_argument("--balance", type=float)
     ac.add_argument("--eod-high", type=float)
     ac.add_argument("--pnl", type=float)
+    ac.add_argument("--result", choices=["win", "loss", "be"], help="override: a scratch with fees is still a breakeven")
     a = p.parse_args(argv)
     cfg = config.load(a.config)
     now = clock.parse_now(a.now)
@@ -70,7 +73,7 @@ def main(argv=None):
         elif a.action == "trade":
             if a.pnl is None:
                 raise ValueError("account trade needs --pnl (negative for a loss)")
-            rules.record_trade(st, a.pnl, cfg)
+            rules.record_trade(st, a.pnl, cfg, result=a.result)
         elif a.action == "eod":
             rules.end_of_day(st, a.balance)
         if a.action != "show":
