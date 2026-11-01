@@ -78,6 +78,27 @@ VARIANTS = [  # (label, candle minutes, last entry time)
 ]
 
 
+def window_variants(spec_text, flat_after_min=60):
+    """'09:45-11:00,20:00-01:00' -> NYAM variants with their own entry window and
+    flat time (window end + flat_after_min; afternoon windows flat by 16:05 because
+    Topstep closes positions at 4:10 PM ET)."""
+    out = []
+    for w in spec_text.split(","):
+        w = w.strip()
+        if not w:
+            continue
+        a, b = [x.strip() for x in w.split("-")]
+        hh, mm = [int(x) for x in b.split(":")]
+        end = datetime.datetime(2000, 1, 1, hh, mm)
+        flat = end + datetime.timedelta(minutes=flat_after_min)
+        topstep_close = datetime.datetime(2000, 1, 1, 16, 5)
+        if 12 <= end.hour < 17 and flat > topstep_close:     # afternoon window: out before 4:10 PM ET
+            flat = topstep_close
+        out.append(("entries %s, flat %s" % (w, flat.strftime("%H:%M")), 5, b,
+                    {"entry_from": a, "entry_to": b, "flat_by": flat.strftime("%H:%M")}))
+    return out
+
+
 def max_drawdown(rs):
     bal = peak = dd = 0.0
     for r in rs:
@@ -102,11 +123,14 @@ def compare(symbols, cfg, strat, params, before, loader, variants=None):
             variants = VARIANTS
         else:   # any other strategy: one row per market, as its file and the config define it
             variants = [("%s as configured" % strat.NAME, cfg.get("bar_minutes") or 5, cfg["no_entries_after"])]
-    for label, bm, last in variants:
+    for v in variants:
+        label, bm, last = v[0], v[1], v[2]
+        over = v[3] if len(v) > 3 else {}
         vcfg = dict(cfg, bar_minutes=bm, no_entries_after=last)
+        vparams = dict(params, **over)
         all_trades = []
         for sym, (spec, bars) in bars_by.items():
-            h = engine.history(strat, params, bars, spec, vcfg, before)
+            h = engine.history(strat, vparams, bars, spec, vcfg, before)
             usd = sum(t["r"] * contracts.dollars(contracts.ticks_between(t["entry"], t["stop"], spec), spec)
                       for t in h["trades"])
             rows.append({"symbol": spec["symbol"], "variant": label, "sessions": h["sessions"], "trades": h["fired"],
@@ -180,6 +204,8 @@ def main(argv=None):
     cp.add_argument("--config")
     cp.add_argument("--strategy")
     cp.add_argument("--param", action="append", metavar="KEY=VALUE", help="override a strategy setting for this run")
+    cp.add_argument("--windows", help='entry windows to compare, e.g. "09:45-11:00,13:00-16:00,20:00-01:00,03:00-08:00"')
+    cp.add_argument("--flat-after", type=int, default=60, help="minutes after each window to be flat (default 60)")
     cp.add_argument("--write", action="store_true", help="save to trader/compare.json")
     a = ap.parse_args(argv)
     if not a.cmd:
@@ -206,8 +232,9 @@ def main(argv=None):
     if a.cmd == "compare":
         before = datetime.date.fromisoformat(a.before) if a.before else clock.parse_now(None).date()
         syms = [s.strip() for s in a.symbols.split(",") if s.strip()]
+        variants = window_variants(a.windows, a.flat_after) if a.windows else None
         rows, totals = compare(syms, cfg, strat, params, before,
-                               lambda s: data.load(s, offline=a.offline, days=60))
+                               lambda s: data.load(s, offline=a.offline, days=60), variants=variants)
         show_compare(rows, totals, strat)
         if a.write:
             config.write_json(cli.out_path("compare.json"), {"rows": rows, "totals": totals})

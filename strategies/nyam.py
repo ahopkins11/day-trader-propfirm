@@ -27,6 +27,7 @@
                      as TARGETS also the 4H candles of the past lookback_days
     prev NY lunch    yesterday 12:00-1:00 high / low       (targets only)
     prev NY PM       yesterday 1:30-4:00 high / low        (targets only)
+    today NYAM       today 9:30-11:00 high / low, from 11:00 (for afternoon windows)
     1H swing         a 1H high (low) above (below) the 1H candles either side
     valid target     a DOL until a 1H candle closes beyond it (target_valid_until)
     FVG              three candles where candle 3's low is above candle 1's high
@@ -47,13 +48,14 @@ DESCRIPTION = "NYAM: liquidity sweep into a 15m/1H FVG, 5m iFVG with displacemen
 BAR_MINUTES = 5                                   # execution candles (the data is 5-minute)
 DAILY_STOP = {"losses": 1, "breakevens": 2, "wins": 2}
 PRE_OPEN_OK = True                                # show the pre-market sweep status before 9:30
+FUTURES_DAY = True                                # windows may run overnight (6 PM-5 PM trading day)
 
 PARAMS = {
     "bias": "auto",              # "auto", "long", "short" or "none"
-    "entry_from": "09:30",       # entries only between these times
-    "entry_to": "11:00",
+    "entry_from": "09:30",       # entries only between these times (may cross midnight,
+    "entry_to": "11:00",         # e.g. 20:00-01:00; 18:00 and later = the evening before)
     "flat_by": None,             # e.g. "12:00" to close any open trade by noon (None = the config's flat_by)
-    "sweep_from": "05:00",       # a sweep counts from this time (pre-market allowed)
+    "sweep_hours": 4.5,          # a sweep counts from this long before entry_from (9:30 -> 5:00 AM)
     "displacement_x": 1.3,       # inversion candle body >= 1.3 x the average of the last bodies
     "body_lookback": 10,
     "stop_buffer_ticks": 2,
@@ -180,6 +182,10 @@ def levels(all5, day, now):
     if ldn:
         highs.append(("London high", hi(ldn), at(day, "05:00")))
         lows.append(("London low", lo(ldn), at(day, "05:00")))
+    tny = between(all5, at(day, "09:30"), at(day, "11:00"))
+    if tny and at(day, "11:00") <= now:          # today's NY AM range, once it is complete (PM sessions)
+        highs.append(("today NYAM high", hi(tny), at(day, "11:00")))
+        lows.append(("today NYAM low", lo(tny), at(day, "11:00")))
     for c4 in resample(between(all5, *day_window(day)), 240):
         if c4["end"] <= now:
             highs.append(("4H high %s" % c4["t"].strftime("%H:%M"), c4["h"], c4["end"]))
@@ -199,7 +205,10 @@ def evaluate(bars, p, ctx):
     if ctx["bar_minutes"] != 5:
         raise ValueError("nyam runs on 5-minute candles")
     now, spec = ctx["now"], ctx["spec"]
-    day = ctx["open"].date()
+    day = ctx.get("day") or ctx["open"].date()
+    win_from, win_to = ctx.get("entry_from"), ctx.get("entry_to")
+    if win_from is None:                            # called without the engine's window
+        win_from, win_to = at(day, p["entry_from"]), at(day, p["entry_to"])
     tick = float(spec["tick"])
     start = at(day - datetime.timedelta(days=p["lookback_days"] + 4), "18:00")
     all5 = [dict(b, end=b["t"] + M5) for b in ctx["all_bars"] if b["t"] >= start]
@@ -237,7 +246,8 @@ def evaluate(bars, p, ctx):
     m5_fvgs = fvgs([b for b in recent if b["end"] <= now])     # 5m FVGs over the lookback (for breakeven)
     opp = [f for f in m5_fvgs if f["side"] == ("bear" if long_ else "bull")]
 
-    scan = [b for b in m5 if b["t"] >= at(day, p["sweep_from"]) and b["t"] < at(day, p["entry_to"])]
+    sweep_start = win_from - datetime.timedelta(hours=float(p["sweep_hours"]))
+    scan = [b for b in m5 if b["t"] >= sweep_start and b["t"] < win_to]
     taken = set()
     state = "waiting for a sweep of %s" % ("sell-side liquidity" if long_ else "buy-side liquidity")
 
@@ -330,7 +340,7 @@ def look_for_ifvg(j, sweep, name, f_htf, scan, m5, opp, dols, p, ctx, tick, long
         if body <= 0 or body < p["displacement_x"] * avg:
             note = "; closed through without displacement at %s" % clock.hm(bk["t"])
             continue
-        if not ctx["can_enter"](bk) or bk["t"] < at(bk["t"].date(), p["entry_from"]):
+        if not ctx["can_enter"](bk) or bk["t"] < ctx.get("entry_from", bk["t"]):
             note = "; displacement through it at %s, outside the entry window" % clock.hm(bk["t"])
             continue
         entry = bk["c"]

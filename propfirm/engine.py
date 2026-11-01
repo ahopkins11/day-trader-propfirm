@@ -21,18 +21,30 @@ class EngineError(Exception):
     pass
 
 
-def entry_window(day, sess, cfg, params=None):
+def fday_at(day, hhmm, what="time"):
+    """A clock time on futures trading day `day` (6 PM the evening before to 5 PM):
+    times from 18:00 belong to the evening before."""
+    t = clock.parse_hhmm(hhmm, what)
+    d = day - datetime.timedelta(days=1) if t.hour >= 18 else day
+    return datetime.datetime.combine(d, t)
+
+
+def entry_window(day, sess, cfg, params=None, fday=False):
+    """(first entry, last entry, flat time). With fday the window may run overnight
+    (e.g. 20:00-01:00) and is capped at the 5 PM daily close instead of 4 PM."""
     o, c = sess
     params = params or {}
     b_txt = params.get("entry_from") or cfg["no_entries_before"]
     a_txt = params.get("entry_to") or cfg["no_entries_after"]
-    before = datetime.datetime.combine(day, clock.parse_hhmm(b_txt, "no_entries_before"))
-    after = datetime.datetime.combine(day, clock.parse_hhmm(a_txt, "no_entries_after"))
-    flat = datetime.datetime.combine(day, clock.parse_hhmm(params.get("flat_by") or cfg["flat_by"], "flat_by"))
-    if after >= c:
-        after = c - datetime.timedelta(minutes=30)
-    if flat > c:
-        flat = c - datetime.timedelta(minutes=5)
+    f_txt = params.get("flat_by") or cfg["flat_by"]
+    before = fday_at(day, b_txt, "no_entries_before")
+    after = fday_at(day, a_txt, "no_entries_after")
+    flat = fday_at(day, f_txt, "flat_by")
+    limit = datetime.datetime.combine(day, datetime.time(17, 0)) if fday else c
+    if after >= limit:
+        after = limit - datetime.timedelta(minutes=30)
+    if flat > limit:
+        flat = limit - datetime.timedelta(minutes=5)
     return before, after, flat
 
 
@@ -71,11 +83,23 @@ def finalize(sig, spec, cfg):
     }
 
 
-def evaluate_day(strategy, params, bars, now, spec, cfg, not_before=None):
+def futures_day(now, spec=None):
+    """The trading day `now` belongs to: from 6 PM it is already the next one."""
+    d = now.date() + datetime.timedelta(days=1) if now.time() >= datetime.time(18, 0) else now.date()
+    for _ in range(7):
+        if clock.trading_day(d)[0]:
+            return d
+        d += datetime.timedelta(days=1)
+    return d
+
+
+def evaluate_day(strategy, params, bars, now, spec, cfg, not_before=None, day=None):
     """The strategy's verdict at `now` (naive ET) for now's session.
     not_before: ignore entries on bars closing at or before this time (the
-    previous trade's exit, for strategies that trade more than once a day)."""
-    day = now.date()
+    previous trade's exit, for strategies that trade more than once a day).
+    day: the trading day to evaluate (default: the one `now` belongs to)."""
+    fday = bool(getattr(strategy, "FUTURES_DAY", False))
+    day = day or (futures_day(now) if fday else now.date())
     step = bar_minutes(strategy, cfg)
     res = {"symbol": spec["symbol"], "strategy": strategy.NAME, "date": day.isoformat(),
            "now": now.strftime("%Y-%m-%d %H:%M"), "status": "", "reason": "", "levels": {}, "plan": None}
@@ -85,7 +109,7 @@ def evaluate_day(strategy, params, bars, now, spec, cfg, not_before=None):
         res.update(status="closed", reason="no regular session today (%s)" % why)
         return res
     o, c = sess
-    before, after, flat = entry_window(day, sess, cfg, params)
+    before, after, flat = entry_window(day, sess, cfg, params, fday=fday)
     res.update(session="%s-%s" % (clock.hm(o), clock.hm(c)), no_entries_before=clock.hm(before),
                no_entries_after=clock.hm(after), flat_by=clock.hm(flat))
     if now < o and not getattr(strategy, "PRE_OPEN_OK", False):
@@ -102,8 +126,9 @@ def evaluate_day(strategy, params, bars, now, spec, cfg, not_before=None):
         return before <= b["end"] <= after
 
     closed = [b for b in bars if b["t"] + FIVE <= now]   # every closed 5-minute bar, all hours
-    ctx = {"open": o, "close": c, "now": now, "bar_minutes": step, "spec": spec,
-           "can_enter": can_enter, "all_bars": closed, "not_before": not_before}
+    ctx = {"open": o, "close": c, "now": now, "bar_minutes": step, "spec": spec, "day": day,
+           "can_enter": can_enter, "all_bars": closed, "not_before": not_before,
+           "entry_from": before, "entry_to": after, "flat_by": flat}
     out = strategy.evaluate(day_bars, params, ctx) or {}
     res["status"] = out.get("status") or "waiting"
     res["reason"] = out.get("reason") or ""
@@ -246,14 +271,21 @@ def history(strategy, params, bars, spec, cfg, before_day, n=59):
     strategy with DAILY_STOP may trade again after each exit until the rule stops it."""
     step = bar_minutes(strategy, cfg)
     rule = getattr(strategy, "DAILY_STOP", None)
+    fday = bool(getattr(strategy, "FUTURES_DAY", False))
     rows = []
     for day, _ in data.past_sessions(bars, before_day, spec, n=n, bar_minutes=step):
         sess = clock.session(day, spec)
-        _, _, flat = entry_window(day, sess, cfg, params)
-        day_session = data.session_bars(bars, day, spec, bar_minutes=step)
+        _, after, flat = entry_window(day, sess, cfg, params, fday=fday)
+        if fday:      # every 5-minute bar from the window to the flat time, overnight included
+            day_session = [dict(b, end=b["t"] + FIVE) for b in bars
+                           if fday_at(day, "18:00") <= b["t"] <= flat]
+            when = max(after, flat)
+        else:
+            day_session = data.session_bars(bars, day, spec, bar_minutes=step)
+            when = sess[1]
         results, not_before = [], None
         while not day_done(results, rule):
-            res = evaluate_day(strategy, params, bars, sess[1], spec, cfg, not_before=not_before)
+            res = evaluate_day(strategy, params, bars, when, spec, cfg, not_before=not_before, day=day)
             if res["status"] != "triggered":
                 break
             plan = res["plan"]

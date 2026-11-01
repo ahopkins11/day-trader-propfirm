@@ -13,7 +13,7 @@ Wed 2026-10-21, ES:
 import datetime
 import unittest
 
-from _load import ROOT  # noqa: F401
+from _load import ROOT, ES as ES_FILE, tool  # noqa: F401
 from propfirm import config, contracts, engine
 
 DT = datetime.datetime
@@ -193,6 +193,35 @@ class KeepWatching(unittest.TestCase):
         cfg, strat, p = setup()
         r = engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 8, 30), ES, cfg)
         self.assertEqual(r["levels"]["bias"], "long")          # Tue close 6020 > Mon midpoint 6000
+
+
+class Windows(unittest.TestCase):
+    def test_overnight_window_maps_to_the_evening_before(self):
+        self.assertEqual(engine.fday_at(WED, "20:00"), DT(2026, 10, 20, 20, 0))
+        self.assertEqual(engine.fday_at(WED, "01:00"), DT(2026, 10, 21, 1, 0))
+        self.assertEqual(engine.futures_day(DT(2026, 10, 20, 21, 0)), WED)
+        self.assertEqual(engine.futures_day(DT(2026, 10, 23, 19, 0)), datetime.date(2026, 10, 26))  # Fri evening -> Mon
+
+    def test_known_day_outside_its_window_does_not_trade(self):
+        cfg, strat, p = setup(entry_from="03:00", entry_to="08:00", flat_by="09:00")
+        r = engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 9, 0), ES, cfg, day=WED)
+        self.assertNotEqual(r["status"], "triggered")            # the 9:35 iFVG is after 8:00
+
+    def test_window_variants(self):
+        tm = tool("prop-timemachine", "timemachine")
+        v = {x[3]["entry_from"]: x[3]["flat_by"] for x in tm.window_variants("09:45-11:00,13:00-16:00,20:00-01:00,03:00-08:00")}
+        self.assertEqual(v, {"09:45": "12:00", "13:00": "16:05", "20:00": "02:00", "03:00": "09:00"})
+
+    def test_compare_runs_every_window(self):
+        tm = tool("prop-timemachine", "timemachine")
+        from propfirm import data
+        bars = data.load_offline(ES_FILE, "ES")
+        cfg, strat, p = setup()
+        rows, totals = tm.compare(["ES"], cfg, strat, p, datetime.date(2026, 10, 19), lambda s: bars,
+                                  variants=tm.window_variants("09:45-11:00,20:00-01:00"))
+        self.assertEqual(len(totals), 2)
+        night = [r for r in rows if "20:00" in r["variant"]][0]
+        self.assertGreater(night["trades"], 0)
 
 
 class BreakevenModes(unittest.TestCase):
