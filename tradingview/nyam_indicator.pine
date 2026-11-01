@@ -137,7 +137,9 @@ if array.size(zBot) > 0
             array.remove(zDir, i)
             box.delete(array.remove(zBox, i))             // gone from the chart too
         else
-            box.set_right(array.get(zBox, i), bar_index)  // still live: stretch it to the current candle
+            bx = array.get(zBox, i)
+            if not na(bx)
+                box.set_right(bx, bar_index)              // still live: stretch it to the current candle
             if dir == bias and low <= top and high >= bot
                 lastTouch := time
 pdTouched = time - lastTouch <= touchMin * 60000
