@@ -154,6 +154,7 @@ def main(argv=None):
     r.add_argument("--offline")
     r.add_argument("--config")
     r.add_argument("--strategy")
+    r.add_argument("--param", action="append", metavar="KEY=VALUE", help="override a strategy setting for this run")
     r.add_argument("--bar-minutes", type=int)
     r.add_argument("--write", action="store_true")
     hi = sub.add_parser("history")
@@ -162,6 +163,7 @@ def main(argv=None):
     hi.add_argument("--offline")
     hi.add_argument("--config")
     hi.add_argument("--strategy")
+    hi.add_argument("--param", action="append", metavar="KEY=VALUE", help="override a strategy setting for this run")
     hi.add_argument("--bar-minutes", type=int)
     dy = sub.add_parser("days", help="why the strategy did or didn't trade, day by day")
     dy.add_argument("symbol")
@@ -169,6 +171,7 @@ def main(argv=None):
     dy.add_argument("--offline")
     dy.add_argument("--config")
     dy.add_argument("--strategy")
+    dy.add_argument("--param", action="append", metavar="KEY=VALUE", help="override a strategy setting for this run")
     dy.add_argument("--bar-minutes", type=int)
     cp = sub.add_parser("compare", help="all three ORB versions on several markets")
     cp.add_argument("--symbols", default="MES,MNQ,MYM,M2K")
@@ -176,6 +179,7 @@ def main(argv=None):
     cp.add_argument("--offline")
     cp.add_argument("--config")
     cp.add_argument("--strategy")
+    cp.add_argument("--param", action="append", metavar="KEY=VALUE", help="override a strategy setting for this run")
     cp.add_argument("--write", action="store_true", help="save to trader/compare.json")
     a = ap.parse_args(argv)
     if not a.cmd:
@@ -183,6 +187,7 @@ def main(argv=None):
         return
     cfg = cli.apply_bar_minutes(config.load(a.config), a)
     strat, params = config.load_strategy(cfg, name=a.strategy)
+    params = cli.apply_params(params, a)
     if a.cmd == "days":
         spec = contracts.spec(a.symbol)
         before = datetime.date.fromisoformat(a.before) if a.before else clock.parse_now(None).date()

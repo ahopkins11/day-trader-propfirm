@@ -48,6 +48,7 @@ PARAMS = {
     "bias": "auto",              # "auto", "long", "short" or "none"
     "entry_from": "09:30",       # entries only between these times
     "entry_to": "11:00",
+    "flat_by": None,             # e.g. "12:00" to close any open trade by noon (None = the config's flat_by)
     "sweep_from": "05:00",       # a sweep counts from this time (pre-market allowed)
     "displacement_x": 1.3,       # inversion candle body >= 1.3 x the average of the last bodies
     "body_lookback": 10,

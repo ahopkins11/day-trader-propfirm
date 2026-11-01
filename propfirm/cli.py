@@ -21,8 +21,39 @@ def common(p, symbols=False, symbol=False):
     p.add_argument("--config", help="config path (default trader/config.json)")
     p.add_argument("--strategy", help="strategy name, overrides the config")
     p.add_argument("--bar-minutes", type=int, help="candle size: 5 (default), 10, 15 or 30; overrides the config")
+    p.add_argument("--param", action="append", metavar="KEY=VALUE", help="override a strategy setting for this run")
     p.add_argument("--write", action="store_true", help="save the result in trader/")
     return p
+
+
+def parse_value(v):
+    low = v.strip().lower()
+    if low in ("true", "yes", "on"):
+        return True
+    if low in ("false", "no", "off"):
+        return False
+    if low in ("none", "null"):
+        return None
+    try:
+        return int(v)
+    except ValueError:
+        pass
+    try:
+        return float(v)
+    except ValueError:
+        return v
+
+
+def apply_params(params, a):
+    """--param key=value (repeatable) overrides a strategy setting for this run only."""
+    for kv in getattr(a, "param", None) or []:
+        if "=" not in kv:
+            raise ValueError("--param wants key=value, e.g. --param breakeven=false")
+        k, v = kv.split("=", 1)
+        if k not in params:
+            raise ValueError("%s has no setting %r. Its settings: %s" % ("this strategy", k, ", ".join(sorted(params))))
+        params[k] = parse_value(v)
+    return params
 
 
 def apply_bar_minutes(cfg, a):
@@ -37,6 +68,7 @@ def apply_bar_minutes(cfg, a):
 def setup(a):
     cfg = apply_bar_minutes(config.load(a.config), a)
     strat, params = config.load_strategy(cfg, name=getattr(a, "strategy", None))
+    params = apply_params(params, a)
     now = clock.parse_now(getattr(a, "now", None))
     return cfg, strat, params, now
 

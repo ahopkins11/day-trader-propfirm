@@ -28,7 +28,7 @@ def entry_window(day, sess, cfg, params=None):
     a_txt = params.get("entry_to") or cfg["no_entries_after"]
     before = datetime.datetime.combine(day, clock.parse_hhmm(b_txt, "no_entries_before"))
     after = datetime.datetime.combine(day, clock.parse_hhmm(a_txt, "no_entries_after"))
-    flat = datetime.datetime.combine(day, clock.parse_hhmm(cfg["flat_by"], "flat_by"))
+    flat = datetime.datetime.combine(day, clock.parse_hhmm(params.get("flat_by") or cfg["flat_by"], "flat_by"))
     if after >= c:
         after = c - datetime.timedelta(minutes=30)
     if flat > c:
