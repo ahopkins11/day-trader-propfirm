@@ -28,6 +28,7 @@
     prev NY lunch    yesterday 12:00-1:00 high / low       (targets only)
     prev NY PM       yesterday 1:30-4:00 high / low        (targets only)
     1H swing         a 1H high (low) above (below) the 1H candles either side
+    valid target     a DOL until a 1H candle closes beyond it (target_valid_until)
     FVG              three candles where candle 3's low is above candle 1's high
                      (bullish) or candle 3's high is below candle 1's low (bearish)
     bias "auto"      long if yesterday closed above the day before's midpoint,
@@ -58,6 +59,9 @@ PARAMS = {
     "stop_buffer_ticks": 2,
     "min_rr": 1.5,               # skip a setup whose nearest DOL is under 1.5R away
     "max_target_r": None,        # e.g. 2.0: never aim further than 2R, even if the DOL is further
+    "target_valid_until": "1h_close",  # a DOL stays a target until a 1H candle CLOSES beyond it
+                                       # "4h_close": until a 4H close beyond it
+                                       # "touch": until price trades through it at all
     "fvg_leg_bars": 12,          # the inverted FVG formed within 12 x 5m bars before the sweep
     "max_bars_after_sweep": 24,  # the iFVG must come within 2 hours of the sweep
     "pd_touch_minutes": 30,      # the move into the sweep touched the PD array within this window
@@ -239,9 +243,20 @@ def evaluate(bars, p, ctx):
 
     times = [x["t"] for x in all5]
 
+    mode = p.get("target_valid_until") or "1h_close"
+    if mode not in ("1h_close", "4h_close", "touch"):
+        raise ValueError("target_valid_until is 1h_close, 4h_close or touch")
+    closes_tf = [c for c in resample(recent, 60 if mode == "1h_close" else 240)] if mode != "touch" else []
+
     def untouched_since(price, formed, upto, above):
-        for x in all5[bisect.bisect_left(times, formed):bisect.bisect_left(times, upto)]:
-            if (x["h"] >= price) if above else (x["l"] <= price):
+        """Is this DOL still a target? (not inversed: no 1H/4H close beyond it, or untouched)"""
+        if mode == "touch":
+            for x in all5[bisect.bisect_left(times, formed):bisect.bisect_left(times, upto)]:
+                if (x["h"] >= price) if above else (x["l"] <= price):
+                    return False
+            return True
+        for c in closes_tf:
+            if c["t"] >= formed and c["end"] <= upto and ((c["c"] > price) if above else (c["c"] < price)):
                 return False
         return True
 

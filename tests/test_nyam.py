@@ -125,6 +125,19 @@ class NyamKnownDay(unittest.TestCase):
         r = engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 9, 41), ES, cfg)
         self.assertEqual(r["plan"]["target"], 6029.0)        # 6020 + 1.5 x 6.00, instead of PDH 6030
 
+    def test_wick_through_pdh_keeps_it_as_target(self):
+        """A 6:30 wick to 6031 trades through PDH 6030 without a 1H close above it."""
+        bars = week()
+        for b in bars:
+            if b["t"] == DT(2026, 10, 21, 6, 30):
+                b.update(h=6031.0)
+        cfg, strat, p = setup()
+        r = engine.evaluate_day(strat, p, bars, DT(2026, 10, 21, 9, 41), ES, cfg)
+        self.assertEqual(r["plan"]["target"], 6030.0)          # 1h_close: PDH is still a target
+        cfg, strat, p = setup(target_valid_until="touch")
+        r = engine.evaluate_day(strat, p, bars, DT(2026, 10, 21, 9, 41), ES, cfg)
+        self.assertEqual(r["plan"]["target"], 6031.0)          # touch: PDH is gone, next is the 6:00 1H swing
+
     def test_min_rr_skips(self):
         cfg, strat, p = setup(min_rr=2.0)
         r = engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 11, 30), ES, cfg)
