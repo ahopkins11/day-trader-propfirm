@@ -120,6 +120,11 @@ class NyamKnownDay(unittest.TestCase):
         self.assertEqual(r["status"], "waiting")
         self.assertIn("bias long", r["reason"])
 
+    def test_target_cap(self):
+        cfg, strat, p = setup(max_target_r=1.5)
+        r = engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 9, 41), ES, cfg)
+        self.assertEqual(r["plan"]["target"], 6029.0)        # 6020 + 1.5 x 6.00, instead of PDH 6030
+
     def test_min_rr_skips(self):
         cfg, strat, p = setup(min_rr=2.0)
         r = engine.evaluate_day(strat, p, week(), DT(2026, 10, 21, 11, 30), ES, cfg)

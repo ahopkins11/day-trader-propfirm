@@ -54,6 +54,7 @@ PARAMS = {
     "body_lookback": 10,
     "stop_buffer_ticks": 2,
     "min_rr": 1.5,               # skip a setup whose nearest DOL is under 1.5R away
+    "max_target_r": None,        # e.g. 2.0: never aim further than 2R, even if the DOL is further
     "fvg_leg_bars": 12,          # the inverted FVG formed within 12 x 5m bars before the sweep
     "max_bars_after_sweep": 24,  # the iFVG must come within 2 hours of the sweep
     "pd_touch_minutes": 30,      # the move into the sweep touched the PD array within this window
@@ -312,6 +313,10 @@ def look_for_ifvg(j, sweep, name, f_htf, scan, m5, opp, dols, p, ctx, tick, long
         rr = abs(target - entry) / abs(entry - stop)
         if rr < p["min_rr"]:
             return None, "iFVG at %s but %s is only %.2fR away (min %.1f)" % (clock.hm(bk["t"]), tname, rr, p["min_rr"])
+        if p.get("max_target_r") and rr > p["max_target_r"]:
+            capped = p["max_target_r"] * abs(entry - stop)
+            target = entry + capped if long_ else entry - capped
+            tname = "%s (capped at %.1fR)" % (tname, p["max_target_r"])
         be = None
         if p.get("breakeven"):
             ahead = [g for g in opp if g["formed"] <= bk["t"]
