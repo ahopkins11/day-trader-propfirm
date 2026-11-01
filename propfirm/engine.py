@@ -159,24 +159,36 @@ def walk(plan, bars_after, flat_dt):
     on_close = plan.get("breakeven_close")
     moved = False
     last = None
+    best = plan["entry"]          # the furthest price in the trade's favor so far (max favorable excursion)
+    best_at = None
+
+    def out(how, price, at):
+        o = _out(how, price, at, plan, risk)
+        o["mfe_r"] = round(abs(best - plan["entry"]) / risk, 2) if risk else 0.0
+        o["mfe_at"] = best_at.strftime("%H:%M") if best_at else None
+        return o
+
     for b in bars_after:
         if b["t"] >= flat_dt:
-            return _out("flat", b["o"], b["t"], plan, risk)
+            return out("flat", b["o"], b["t"])
         hit_stop = b["l"] <= stop if long_ else b["h"] >= stop
         hit_tgt = b["h"] >= plan["target"] if long_ else b["l"] <= plan["target"]
         end = b.get("end", b["t"])
+        fav = min(b["h"], plan["target"]) if long_ else max(b["l"], plan["target"])
+        if (fav > best) if long_ else (fav < best):
+            best, best_at = fav, b["t"]
         if hit_stop:      # reported at the close of the candle that hit it
-            return _out("breakeven" if moved else "stop", stop, end, plan, risk)
+            return out("breakeven" if moved else "stop", stop, end)
         if hit_tgt:
-            return _out("target", plan["target"], end, plan, risk)
+            return out("target", plan["target"], end)
         if be is not None and not moved:
             px_up, px_dn = (b["c"], b["c"]) if on_close else (b["h"], b["l"])
             if px_up >= be if long_ else px_dn <= be:
                 stop, moved = plan["entry"], True
         last = b
     if last is None:
-        return _out("flat", plan["entry"], None, plan, risk)
-    return _out("flat", last["c"], last["end"], plan, risk)
+        return out("flat", plan["entry"], None)
+    return out("flat", last["c"], last["end"])
 
 
 def _out(how, price, at, plan, risk):
@@ -293,7 +305,8 @@ def history(strategy, params, bars, spec, cfg, before_day, n=59):
             w = walk(plan, [b for b in day_session if b["t"] >= trig_end], flat)
             row = {"date": day.isoformat(), "side": plan["side"], "entry": plan["entry"],
                    "stop": plan["stop"], "target": plan["target"], "entry_at": plan["bar_close"][11:]}
-            row.update(outcome=w["outcome"], exit=w["exit"], exit_at=w["at"], r=w["r"])
+            row.update(outcome=w["outcome"], exit=w["exit"], exit_at=w["at"], r=w["r"],
+                       mfe_r=w["mfe_r"], mfe_at=w["mfe_at"])
             rows.append(row)
             results.append(result_kind(w["outcome"], w["r"]))
             if w["_at"] is None or w["outcome"] == "flat":
@@ -305,4 +318,22 @@ def history(strategy, params, bars, spec, cfg, before_day, n=59):
     out = {"sessions": sessions, "fired": len(rows), "total_r": total_r,
            "avg_r": round(total_r / len(rows), 3) if rows else None, "trades": rows}
     out.update(tally)
+    return out
+
+
+def excursion(trades):
+    """How far trades went in their favor before they ended, by outcome."""
+    def summ(rows):
+        m = sorted(r["mfe_r"] for r in rows)
+        n = len(m)
+        if not n:
+            return None
+        pct = lambda x: round(100.0 * sum(1 for v in m if v >= x) / n)  # noqa: E731
+        return {"n": n, "avg": round(sum(m) / n, 2), "median": m[n // 2] if n % 2 else round((m[n // 2 - 1] + m[n // 2]) / 2, 2),
+                "ge_0_5": pct(0.5), "ge_1": pct(1.0), "ge_1_5": pct(1.5), "ge_2": pct(2.0), "ge_3": pct(3.0)}
+    out = {"all": summ(trades)}
+    for k in ("target", "stop", "breakeven", "flat"):
+        s = summ([r for r in trades if r["outcome"] == k])
+        if s:
+            out[k] = s
     return out

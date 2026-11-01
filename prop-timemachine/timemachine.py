@@ -140,6 +140,7 @@ def compare(symbols, cfg, strat, params, before, loader, variants=None):
                          "usd_1_contract": round(usd, 2)})
             all_trades += [dict(t, symbol=spec["symbol"]) for t in h["trades"]]
         all_trades.sort(key=lambda t: (t["date"], t["entry_at"]))
+        variant_trades = all_trades
         n = len(all_trades)
         wins = sum(1 for t in all_trades if t["outcome"] == "target")
         tot = round(sum(t["r"] for t in all_trades), 2)
@@ -147,8 +148,22 @@ def compare(symbols, cfg, strat, params, before, loader, variants=None):
                        "total_r": tot, "avg_r": round(tot / n, 3) if n else 0,
                        "max_dd_r": round(max_drawdown([t["r"] for t in all_trades]), 2),
                        "positive_markets": sum(1 for r in rows if r.get("variant") == label and r["total_r"] > 0),
-                       "markets": len(bars_by)})
+                       "markets": len(bars_by), "_trades": variant_trades})
     return rows, totals
+
+
+def show_excursion(label_trades):
+    print("\nHow far trades went in their favor before they ended (max favorable excursion, in R):")
+    print("  %-34s %-10s %4s %6s %6s %6s %6s %6s %6s %6s" % ("version", "trades", "n", "avg", "median", ">=0.5", ">=1", ">=1.5", ">=2", ">=3"))
+    for label, trades in label_trades:
+        ex = engine.excursion(trades)
+        for k in ("all", "breakeven", "stop", "flat", "target"):
+            s = ex.get(k)
+            if not s:
+                continue
+            print("  %-34s %-10s %4d %6.2f %6.2f %5d%% %5d%% %5d%% %5d%% %5d%%" % (
+                label if k == "all" else "", k, s["n"], s["avg"], s["median"], s["ge_0_5"], s["ge_1"], s["ge_1_5"],
+                s["ge_2"], s["ge_3"]))
 
 
 def show_compare(rows, totals, strat):
@@ -165,6 +180,7 @@ def show_compare(rows, totals, strat):
     for t in totals:
         print("  %-34s %6d %6.1f %+8.2f %+7.3f %7.2f %6d of %d" % (t["variant"], t["trades"], t["win_pct"], t["total_r"],
               t["avg_r"], t["max_dd_r"], t["positive_markets"], t["markets"]))
+    show_excursion([(t["variant"], t["_trades"]) for t in totals])
     print("\nR is comparable across markets; dollars are for 1 contract of each (MNQ moves more per point than MES).")
     print("Before fees. Max DD is the worst drop from a high, in R. A backtest, not a promise.")
 
@@ -237,7 +253,8 @@ def main(argv=None):
                                lambda s: data.load(s, offline=a.offline, days=60), variants=variants)
         show_compare(rows, totals, strat)
         if a.write:
-            config.write_json(cli.out_path("compare.json"), {"rows": rows, "totals": totals})
+            config.write_json(cli.out_path("compare.json"), {"rows": rows, "totals": [
+                {k: v for k, v in x.items() if k != "_trades"} for x in totals]})
             print("wrote trader/compare.json")
         return
     if a.cmd == "history":
@@ -245,9 +262,11 @@ def main(argv=None):
         before = datetime.date.fromisoformat(a.before) if a.before else clock.parse_now(None).date()
         h = engine.history(strat, params, data.load(spec, offline=a.offline, days=60), spec, cfg, before)
         for t in h["trades"]:
-            print("  %s  %s in at %-8s -> %-6s at %-14s %+.2fR" % (
+            print("  %s  %s in at %-8s -> %-9s at %-14s %+.2fR   (went %.2fR in favor%s)" % (
                 t["date"], t["side"], "%s %s" % (t["entry_at"], t["entry"]), t["outcome"],
-                "%s %s" % (t["exit_at"] or "close", t["exit"]), t["r"]))
+                "%s %s" % (t["exit_at"] or "close", t["exit"]), t["r"], t["mfe_r"],
+                (" by %s" % t["mfe_at"]) if t.get("mfe_at") else ""))
+        show_excursion([("%s %s" % (strat.NAME, spec["symbol"]), h["trades"])])
         print("%s, %d-minute bars, on %d sessions: fired %d, target %d, stop %d, breakeven %d, neither %d, total %+.2fR"
               % (strat.NAME, engine.bar_minutes(strat, cfg), h["sessions"], h["fired"], h["target"], h["stop"],
                  h.get("breakeven", 0), h["flat"], h["total_r"]))

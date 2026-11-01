@@ -258,6 +258,12 @@ class Breakeven(unittest.TestCase):
         w = engine.walk(self.PLAN, [self.b(0, 103.5, 99.5), self.b(5, 101, 99.75)], DT(2026, 10, 21, 15, 55))
         self.assertEqual((w["outcome"], w["r"]), ("breakeven", 0.0))
 
+    def test_max_favorable_excursion(self):
+        w = engine.walk(self.PLAN, [self.b(0, 103.5, 99.5), self.b(5, 101, 99.75)], DT(2026, 10, 21, 15, 55))
+        self.assertEqual((w["mfe_r"], w["mfe_at"]), (1.75, "10:00"))      # up to 103.5 on 2.0 risk
+        ex = engine.excursion([{"outcome": "breakeven", "mfe_r": 1.75}, {"outcome": "stop", "mfe_r": 0.25}])
+        self.assertEqual((ex["all"]["n"], ex["breakeven"]["ge_1_5"], ex["stop"]["ge_0_5"]), (2, 100, 0))
+
     def test_stop_before_trigger_is_a_loss(self):
         w = engine.walk(self.PLAN, [self.b(0, 102, 97.5)], DT(2026, 10, 21, 15, 55))
         self.assertEqual(w["outcome"], "stop")
