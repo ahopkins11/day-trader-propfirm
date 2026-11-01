@@ -70,6 +70,74 @@ def describe(doc):
     return "\n".join(lines)
 
 
+VARIANTS = [  # (label, candle minutes, last entry time)
+    ("5m candles, entries until 3 PM", 5, "15:00"),
+    ("15m candles, entries until 3 PM", 15, "15:00"),
+    ("15m candles, entries until 11 AM", 15, "11:00"),
+]
+
+
+def max_drawdown(rs):
+    bal = peak = dd = 0.0
+    for r in rs:
+        bal += r
+        peak = max(peak, bal)
+        dd = max(dd, peak - bal)
+    return dd
+
+
+def compare(symbols, cfg, strat, params, before, loader, variants=VARIANTS):
+    """Run each variant on each symbol over the same days. Returns rows and per-variant totals."""
+    rows, totals = [], []
+    bars_by = {}
+    for sym in symbols:
+        spec = contracts.spec(sym)
+        try:
+            bars_by[sym] = (spec, loader(spec))
+        except data.DataError as e:
+            rows.append({"symbol": spec["symbol"], "variant": "-", "error": str(e)})
+    for label, bm, last in variants:
+        vcfg = dict(cfg, bar_minutes=bm, no_entries_after=last)
+        all_trades = []
+        for sym, (spec, bars) in bars_by.items():
+            h = engine.history(strat, params, bars, spec, vcfg, before)
+            usd = sum(t["r"] * contracts.dollars(contracts.ticks_between(t["entry"], t["stop"], spec), spec)
+                      for t in h["trades"])
+            rows.append({"symbol": spec["symbol"], "variant": label, "sessions": h["sessions"], "trades": h["fired"],
+                         "wins": h["target"], "losses": h["stop"], "flat": h["flat"], "total_r": h["total_r"],
+                         "max_dd_r": round(max_drawdown([t["r"] for t in h["trades"]]), 2),
+                         "usd_1_contract": round(usd, 2)})
+            all_trades += [dict(t, symbol=spec["symbol"]) for t in h["trades"]]
+        all_trades.sort(key=lambda t: (t["date"], t["entry_at"]))
+        n = len(all_trades)
+        wins = sum(1 for t in all_trades if t["outcome"] == "target")
+        tot = round(sum(t["r"] for t in all_trades), 2)
+        totals.append({"variant": label, "trades": n, "wins": wins, "win_pct": round(100.0 * wins / n, 1) if n else 0,
+                       "total_r": tot, "avg_r": round(tot / n, 3) if n else 0,
+                       "max_dd_r": round(max_drawdown([t["r"] for t in all_trades]), 2),
+                       "positive_markets": sum(1 for r in rows if r.get("variant") == label and r["total_r"] > 0),
+                       "markets": len(bars_by)})
+    return rows, totals
+
+
+def show_compare(rows, totals, strat):
+    print("%s: each version on each market, same days\n" % strat.NAME)
+    print("  %-5s %-34s %6s %5s %5s %5s %8s %7s %10s" % ("mkt", "version", "trades", "win", "loss", "flat", "total R", "max DD", "$ 1 contr"))
+    for r in rows:
+        if "error" in r:
+            print("  %-5s %s" % (r["symbol"], r["error"]))
+            continue
+        print("  %-5s %-34s %6d %5d %5d %5d %+8.2f %7.2f %10.2f" % (r["symbol"], r["variant"], r["trades"], r["wins"],
+              r["losses"], r["flat"], r["total_r"], r["max_dd_r"], r["usd_1_contract"]))
+    print("\nAll markets together:")
+    print("  %-34s %6s %6s %8s %7s %7s %9s" % ("version", "trades", "win %", "total R", "avg R", "max DD", "markets +"))
+    for t in totals:
+        print("  %-34s %6d %6.1f %+8.2f %+7.3f %7.2f %6d of %d" % (t["variant"], t["trades"], t["win_pct"], t["total_r"],
+              t["avg_r"], t["max_dd_r"], t["positive_markets"], t["markets"]))
+    print("\nR is comparable across markets; dollars are for 1 contract of each (MNQ moves more per point than MES).")
+    print("Before fees. Max DD is the worst drop from a high, in R. A backtest, not a promise.")
+
+
 def main(argv=None):
     ap = cli.parser("Replay a plan before you risk the account")
     sub = ap.add_subparsers(dest="cmd")
@@ -88,12 +156,29 @@ def main(argv=None):
     hi.add_argument("--config")
     hi.add_argument("--strategy")
     hi.add_argument("--bar-minutes", type=int)
+    cp = sub.add_parser("compare", help="all three ORB versions on several markets")
+    cp.add_argument("--symbols", default="MES,MNQ,MYM,M2K")
+    cp.add_argument("--before", help="YYYY-MM-DD (default today)")
+    cp.add_argument("--offline")
+    cp.add_argument("--config")
+    cp.add_argument("--strategy")
+    cp.add_argument("--write", action="store_true", help="save to trader/compare.json")
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help()
         return
     cfg = cli.apply_bar_minutes(config.load(a.config), a)
     strat, params = config.load_strategy(cfg, name=a.strategy)
+    if a.cmd == "compare":
+        before = datetime.date.fromisoformat(a.before) if a.before else clock.parse_now(None).date()
+        syms = [s.strip() for s in a.symbols.split(",") if s.strip()]
+        rows, totals = compare(syms, cfg, strat, params, before,
+                               lambda s: data.load(s, offline=a.offline, days=60))
+        show_compare(rows, totals, strat)
+        if a.write:
+            config.write_json(cli.out_path("compare.json"), {"rows": rows, "totals": totals})
+            print("wrote trader/compare.json")
+        return
     if a.cmd == "history":
         spec = contracts.spec(a.symbol)
         before = datetime.date.fromisoformat(a.before) if a.before else clock.parse_now(None).date()

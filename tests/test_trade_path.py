@@ -67,6 +67,20 @@ class TimeMachine(unittest.TestCase):
             self.assertTrue(t["exit_at"] is None or t["exit_at"] >= t["entry_at"], t)
 
 
+class Compare(unittest.TestCase):
+    def test_three_versions(self):
+        tm = tool("prop-timemachine", "timemachine")
+        bars = data.load_offline(ES, "ES")
+        strat, params = config.load_strategy(config.DEFAULTS)
+        rows, totals = tm.compare(["ES"], cfg(), strat, params, datetime.date(2026, 10, 19), lambda s: bars)
+        self.assertEqual([t["variant"] for t in totals], [v[0] for v in tm.VARIANTS])
+        five = engine.history(strat, params, bars, contracts.spec("ES"), dict(cfg(), bar_minutes=5, no_entries_after="15:00"),
+                              datetime.date(2026, 10, 19))
+        self.assertEqual(totals[0]["total_r"], five["total_r"])
+        self.assertLessEqual(totals[2]["trades"], totals[1]["trades"])     # 11 AM cutoff never adds trades
+        self.assertEqual(tm.max_drawdown([1, -1, -1, 1, -2]), 3)
+
+
 class Sizing(unittest.TestCase):
     def test_falls_back_to_micros(self):
         o = size.size(PLAN, cfg(), state())
