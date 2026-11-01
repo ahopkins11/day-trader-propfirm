@@ -112,7 +112,7 @@ var array<box> zBox = array.new<box>()     // its box on the chart (deleted when
 addZone(bot, top, dir, tf) =>
     box bx = na
     if showFvg and visible(tf)
-        bx := box.new(bar_index, top, bar_index, bot, border_color = dir == 1 ? color.new(color.teal, 60) : color.new(color.maroon, 60), bgcolor = dir == 1 ? color.new(color.teal, 90) : color.new(color.maroon, 90), text = tfName(tf) + (dir == 1 ? " bull FVG" : " bear FVG"), text_size = size.tiny, text_color = dir == 1 ? color.teal : color.maroon, text_halign = text.align_left, text_valign = text.align_center)
+        bx := box.new(bar_index, top, bar_index, bot, border_color = dir == 1 ? color.new(color.teal, 60) : color.new(color.maroon, 60), bgcolor = dir == 1 ? color.new(color.teal, 90) : color.new(color.maroon, 90), text = tfName(tf) + (dir == 1 ? " bull FVG" : " bear FVG"), text_size = size.tiny, text_color = color.white, text_halign = text.align_left, text_valign = text.align_center)
     if tf != 5 or not na(bx)                   // 5m zones are kept only when drawn
         array.push(zBot, bot)
         array.push(zTop, top)
