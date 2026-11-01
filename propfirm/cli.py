@@ -20,12 +20,22 @@ def common(p, symbols=False, symbol=False):
     p.add_argument("--offline", help="a saved bars file or folder instead of Yahoo")
     p.add_argument("--config", help="config path (default trader/config.json)")
     p.add_argument("--strategy", help="strategy name, overrides the config")
+    p.add_argument("--bar-minutes", type=int, help="candle size: 5 (default), 10, 15 or 30; overrides the config")
     p.add_argument("--write", action="store_true", help="save the result in trader/")
     return p
 
 
+def apply_bar_minutes(cfg, a):
+    bm = getattr(a, "bar_minutes", None)
+    if bm is not None:
+        cfg["bar_minutes"] = bm
+    if int(cfg.get("bar_minutes") or 5) not in (5, 10, 15, 30):
+        raise ValueError("bar_minutes must be 5, 10, 15 or 30 (the tools build them from 5-minute data)")
+    return cfg
+
+
 def setup(a):
-    cfg = config.load(a.config)
+    cfg = apply_bar_minutes(config.load(a.config), a)
     strat, params = config.load_strategy(cfg, name=getattr(a, "strategy", None))
     now = clock.parse_now(getattr(a, "now", None))
     return cfg, strat, params, now

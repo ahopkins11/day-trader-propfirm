@@ -194,6 +194,37 @@ class OrbKnownDay(unittest.TestCase):
         self.assertEqual(r["status"], "closed")
 
 
+class FifteenMinuteBars(unittest.TestCase):
+    """The known day built into 15-minute candles from its 5-minute bars."""
+
+    def test_aggregation(self):
+        bars = data.load_offline(ES, "ES")
+        sb = data.session_bars(bars, datetime.date(2026, 10, 19), contracts.spec("ES"), bar_minutes=15)
+        first = sb[0]
+        self.assertEqual((first["t"], first["end"], first["i"]), (DT(2026, 10, 19, 9, 30), DT(2026, 10, 19, 9, 45), 0))
+        self.assertEqual((first["o"], first["h"], first["l"], first["c"]), (6003.00, 6010.00, 6000.00, 6004.00))
+        self.assertEqual(len(sb), 26)
+        part = data.session_bars(bars, datetime.date(2026, 10, 19), contracts.spec("ES"),
+                                 now=DT(2026, 10, 19, 9, 55), bar_minutes=15)
+        self.assertEqual(len(part), 1)                       # the 9:45 candle is still forming
+
+    def test_orb_on_15_minute_candles(self):
+        bars = data.load_offline(ES, "ES")
+        cfg = dict(config.DEFAULTS, bar_minutes=15)
+        strat, params = config.load_strategy(cfg)
+        r = engine.evaluate_day(strat, params, bars, DT(2026, 10, 19, 10, 30), contracts.spec("ES"), cfg)
+        p = r["plan"]
+        self.assertEqual((p["entry"], p["stop"], p["bar_close"][11:], p["risk_ticks"]), (6014.0, 6005.0, "10:00", 36))
+        self.assertEqual(r["levels"]["range_high"], 6010.0)
+
+    def test_history_runs_on_15(self):
+        bars = data.load_offline(ES, "ES")
+        cfg = dict(config.DEFAULTS, bar_minutes=15)
+        strat, params = config.load_strategy(cfg)
+        h = engine.history(strat, params, bars, contracts.spec("ES"), cfg, datetime.date(2026, 10, 19))
+        self.assertEqual(h["fired"], h["target"] + h["stop"] + h["flat"])
+
+
 class Shorts(unittest.TestCase):
     def test_short_breakout(self):
         orb = config.load_strategy(config.DEFAULTS)[0]

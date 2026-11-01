@@ -83,6 +83,7 @@ def evaluate_day(strategy, params, bars, now, spec, cfg):
     if sig:
         res["status"] = "triggered"
         res["plan"] = finalize(sig, spec, cfg)
+        res["plan"]["bar_minutes"] = step
     elif res["status"] == "waiting" and now >= after:
         res["status"] = "expired"
         res["reason"] = "no signal by %s, the last time for a new entry (%s)" % (clock.ampm(after), res["reason"])

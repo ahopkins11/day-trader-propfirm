@@ -173,19 +173,26 @@ def session_bars(bars, day, spec, now=None, bar_minutes=5):
         return []
     o, c = s
     step = datetime.timedelta(minutes=bar_minutes)
-    out = []
+    buckets = {}
     for b in bars:
         if b["t"].date() != day or not (o <= b["t"] < c):
             continue
         off = (b["t"] - o).total_seconds()
-        if off % (bar_minutes * 60):
-            continue
-        if now is not None and b["t"] + step > now:
-            continue
-        nb = dict(b)
-        nb["i"] = int(off // (bar_minutes * 60))
-        nb["end"] = b["t"] + step
-        out.append(nb)
+        if off % 60:
+            continue                       # a live tick off the minute grid is not a bar
+        k = int(off // (bar_minutes * 60))
+        buckets.setdefault(k, []).append(b)
+    out = []
+    for k in sorted(buckets):
+        start = o + step * k
+        end = start + step
+        if end > c or (now is not None and end > now):
+            continue                       # still forming, or cut off by the close
+        grp = buckets[k]
+        if bar_minutes == 5 and grp[0]["t"] != start:
+            continue                       # keep 5-minute bars exactly on the grid
+        out.append({"t": start, "end": end, "i": k, "o": grp[0]["o"], "h": max(x["h"] for x in grp),
+                    "l": min(x["l"] for x in grp), "c": grp[-1]["c"], "v": sum(x["v"] for x in grp)})
     return out
 
 

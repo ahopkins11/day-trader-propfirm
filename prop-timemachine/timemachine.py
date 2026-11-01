@@ -23,7 +23,8 @@ from propfirm import cli, clock, config, contracts, data, engine  # noqa: E402
 def replay(plan, bars, cfg, strat, params, sims=10000, seed=None, n_hist=59):
     spec = contracts.spec(plan["symbol"])
     day = datetime.date.fromisoformat(plan["date"])
-    step = int(cfg.get("bar_minutes") or 5)
+    step = int(plan.get("bar_minutes") or cfg.get("bar_minutes") or 5)
+    cfg = dict(cfg, bar_minutes=step)          # replay with the candle size the plan was made on
     sess = clock.session(day, spec)
     if not sess:
         raise ValueError("no regular session on %s" % day)
@@ -78,6 +79,7 @@ def main(argv=None):
     r.add_argument("--offline")
     r.add_argument("--config")
     r.add_argument("--strategy")
+    r.add_argument("--bar-minutes", type=int)
     r.add_argument("--write", action="store_true")
     hi = sub.add_parser("history")
     hi.add_argument("symbol")
@@ -85,11 +87,12 @@ def main(argv=None):
     hi.add_argument("--offline")
     hi.add_argument("--config")
     hi.add_argument("--strategy")
+    hi.add_argument("--bar-minutes", type=int)
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help()
         return
-    cfg = config.load(a.config)
+    cfg = cli.apply_bar_minutes(config.load(a.config), a)
     strat, params = config.load_strategy(cfg, name=a.strategy)
     if a.cmd == "history":
         spec = contracts.spec(a.symbol)
@@ -99,8 +102,8 @@ def main(argv=None):
             print("  %s  %s in at %-8s -> %-6s at %-14s %+.2fR" % (
                 t["date"], t["side"], "%s %s" % (t["entry_at"], t["entry"]), t["outcome"],
                 "%s %s" % (t["exit_at"] or "close", t["exit"]), t["r"]))
-        print("%s on %d sessions: fired %d, target %d, stop %d, neither %d, total %+.2fR"
-              % (strat.NAME, h["sessions"], h["fired"], h["target"], h["stop"], h["flat"], h["total_r"]))
+        print("%s, %d-minute bars, on %d sessions: fired %d, target %d, stop %d, neither %d, total %+.2fR"
+              % (strat.NAME, int(cfg["bar_minutes"]), h["sessions"], h["fired"], h["target"], h["stop"], h["flat"], h["total_r"]))
         return
     plan = config.read_json(cli.out_path("plan.json"))
     if not plan:
